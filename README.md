@@ -212,9 +212,21 @@ The search matches words, so it can miss a source that says the same thing in ot
 | Claude or Codex on your plan | `~/Documents/Zotero-Agent` (the default) or `~/ReadingRoom/chat` | Sign-in and network |
 | The local model | `~/ReadingRoom/chat-local` | The local server running |
 
+For Codex, `setup` writes `.codex/config.toml` in each cloud folder. `zotero-cli` reads the library through Zotero's server on your own machine, and Codex's default sandbox blocks that ("Operation not permitted"), so the file lets Codex use the network from that folder only. It also sets medium reasoning effort, which answers reading questions faster than high. Codex reads such a file only in a trusted folder, so `setup` marks the folder trusted in `~/.codex/config.toml`.
+
 For the local model, load it with at least 32,768 tokens of context. Panel turns measured up to 21,738 input tokens per call, and a smaller window can drop the start of the prompt with no error. In LM Studio, run `lms load qwen/qwen3.5-9b --context-length 32768` and then `lms server start --bind 127.0.0.1`. In Ollama, set `OLLAMA_CONTEXT_LENGTH=32768` and restart it. `doctor --ask` sends one real turn to the local model and times it.
 
-Small models such as Gemma 4 E4B (`setup --local lmstudio --model gemma-4-e4b-it`) answer fast, but a local model has to read the whole prompt before its first word. Claude Code's tools, skills and plugins came to 24,078 tokens a call, 38 s on a Mac before Gemma said anything. So `chat-local` hides what a reading chat does not use: the web, task, plan and skill tools, your plugins and your own MCP servers. That brings it to about 11,000 tokens. Read, Grep, Glob, Bash (for `zotero-cli`), the source hook and `CLAUDE.md` stay. LM Studio also reuses an unchanged prompt start, so after the first question a library lookup with one tool call took 12 s. The cloud folders keep everything.
+Small models such as Gemma 4 E4B (`setup --local lmstudio --model gemma-4-e4b-it`) answer fast, but a local model has to read the whole prompt before its first word. Claude Code's tools, skills and plugins came to 24,078 tokens a call, 38 s on a Mac before Gemma said anything. So `chat-local` hides what a reading chat does not use: the web, task, plan, skill, Write and Edit tools, your plugins, your own MCP servers and your claude.ai connectors. That brings it to about 12,700 tokens. Read, Grep, Glob, Bash (for `zotero-cli`), the source hook and `CLAUDE.md` stay. LM Studio also reuses an unchanged prompt start, so a short answer then takes about 1 s and a library lookup with one tool call about 12 s. The cloud folders keep everything.
+
+The claude.ai connectors (Gmail, Notion, alphaXiv and the rest) appear once Claude Code is signed in. With them a call went over 32,768 tokens and LM Studio refused every turn. Claude Code only skips them when told so before it starts, so `setup` asks it which connectors it has and denies each one in `chat-local`. Run `setup` again after you add a connector.
+
+After a restart LM Studio may load the model with too little context. This loads it with 32,768 at each login, and does nothing when it is already loaded that way:
+
+```bash
+python3.12 reading_room.py autoload
+```
+
+`local-ready` does the same once, by hand, and `autoload --remove` takes the login job away.
 
 On a machine with no Claude sign-in, the panel will not send, even in `chat-local`. Start Zotero with `python3.12 reading_room.py zotero` instead. That gives this one Zotero a placeholder token. Do not set the token for the whole machine, because it would override a real sign-in.
 
