@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Insert equation</title>
+  <link rel="stylesheet" href="equation.css">
+</head>
+<body>
+  <math-field id="field" aria-label="Equation"></math-field>
+  <div id="keyboard"></div>
+  <label for="source">LaTeX</label>
+  <textarea id="source" rows="2" spellcheck="false"></textarea>
+  <div id="recent"></div>
+  <div class="row">
+    <label><input type="radio" name="mode" value="inline" checked> In the text</label>
+    <label><input type="radio" name="mode" value="display"> On its own line</label>
+    <span class="grow"></span>
+    <button id="cancel">Cancel</button>
+    <button id="insert" class="primary">Insert</button>
+  </div>
+  <!-- MathLive must load after the body exists: it remembers document.body when the script runs. -->
+  <script src="vendor/mathlive.min.js"></script>
+  <script src="equation.js"></script>
+</body>
+</html>

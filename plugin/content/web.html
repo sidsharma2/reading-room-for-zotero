@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Connections</title>
+  <link rel="stylesheet" href="web.css">
+</head>
+<body>
+  <header>
+    <button id="back" title="Back to the last web" disabled>&#8592;</button>
+    <div class="heading">
+      <h1 id="title">Connections</h1>
+      <p id="subtitle"></p>
+    </div>
+    <label class="toggle"><input type="checkbox" id="byYear"> By year</label>
+    <button id="map" title="How your whole library cites itself">Map my library</button>
+    <button id="refresh" title="Ask OpenAlex again instead of using the 30-day cache">Refresh</button>
+  </header>
+  <main>
+    <section id="stage">
+      <svg id="graph" role="img" aria-label="Connections web">
+        <g id="world">
+          <g id="axis"></g>
+          <g id="edges"></g>
+          <g id="nodes"></g>
+          <g id="labels"></g>
+        </g>
+      </svg>
+      <div id="status" role="status"></div>
+      <div id="legend">
+        <span><i class="dot have"></i>have</span>
+        <span><i class="dot wanted"></i>wanted</span>
+        <span><i class="dot new"></i>new</span>
+        <span><i class="line cites"></i>cites</span>
+        <span><i class="line similar"></i>similar</span>
+        <span id="budget"></span>
+      </div>
+    </section>
+    <aside>
+      <div id="filters"></div>
+      <div id="details" hidden>
+        <h2 id="d-title"></h2>
+        <p id="d-meta"></p>
+        <p id="d-mark"></p>
+        <p id="d-note"></p>
+        <div id="d-actions"></div>
+        <p id="d-abstract"></p>
+      </div>
+      <div class="listhead">
+        <input id="search" type="search" placeholder="Filter by title or author" aria-label="Filter by title or author">
+        <select id="sort" aria-label="Sort">
+          <option value="cites">Most cited</option>
+          <option value="year">Newest</option>
+          <option value="old">Oldest</option>
+        </select>
+      </div>
+      <div id="list"></div>
+    </aside>
+  </main>
+  <script src="web.js"></script>
+</body>
+</html>

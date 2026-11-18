@@ -1,0 +1,4 @@
+# LF everywhere, so plugin/build.py gives the same .xpi, and the same hash, on every machine.
+* text=auto eol=lf
+*.xpi binary
+*.tgz binary

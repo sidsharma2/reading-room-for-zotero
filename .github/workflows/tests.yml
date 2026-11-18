@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python tests
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q
+      - name: Plugin tests
+        run: node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs
+      - name: Build Reading Room Tools, the same file on every machine
+        shell: bash
+        run: |
+          python plugin/build.py
+          python -c "import hashlib; print(hashlib.sha256(open('plugin/reading-room-tools.xpi', 'rb').read()).hexdigest())"
