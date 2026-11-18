@@ -51,4 +51,5 @@ jobs:
       - name: Compare the two builds
         run: |
           cat plugin-sha256-*/plugin-sha256.txt
-          test "$(cat plugin-sha256-*/plugin-sha256.txt | sort -u | wc -l)" -eq 1
+          # Windows writes the file with CRLF, so line endings are dropped before comparing.
+          test "$(cat plugin-sha256-*/plugin-sha256.txt | tr -d '\r' | sort -u | wc -l)" -eq 1
