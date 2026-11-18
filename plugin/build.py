@@ -46,9 +46,11 @@ def vendored() -> dict[str, bytes]:
 
 
 def add(package: zipfile.ZipFile, name: str, data: bytes) -> None:
-    """A fixed date and mode, so the same sources give the same file, and the same hash, on every machine."""
+    """A fixed date, mode and system, so the same sources give the same file, and the same hash, on every machine.
+    zipfile marks each entry as made on Windows (0) or Unix (3) by the machine it runs on, so that is fixed too."""
     info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 3
     info.external_attr = 0o644 << 16
     package.writestr(info, data)
 

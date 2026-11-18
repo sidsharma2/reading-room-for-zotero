@@ -29,8 +29,26 @@ jobs:
           python -m pytest -q
       - name: Plugin tests
         run: node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs
-      - name: Build Reading Room Tools, the same file on every machine
+      - name: Build Reading Room Tools
         shell: bash
         run: |
           python plugin/build.py
-          python -c "import hashlib; print(hashlib.sha256(open('plugin/reading-room-tools.xpi', 'rb').read()).hexdigest())"
+          python -c "import hashlib; print(hashlib.sha256(open('plugin/reading-room-tools.xpi', 'rb').read()).hexdigest())" > plugin-sha256.txt
+          cat plugin-sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-sha256-${{ matrix.os }}
+          path: plugin-sha256.txt
+
+  same-build:
+    name: same plugin on macOS and Windows
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-sha256-*
+      - name: Compare the two builds
+        run: |
+          cat plugin-sha256-*/plugin-sha256.txt
+          test "$(cat plugin-sha256-*/plugin-sha256.txt | sort -u | wc -l)" -eq 1
