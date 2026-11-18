@@ -211,7 +211,34 @@ def test_auto_approval_is_off_unless_asked_for(home: Path) -> None:
     kit.setup(setup_args(root))
     for name in ("chat", "chat-local"):
         settings = json.loads((root / name / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        assert list(settings["hooks"]) == ["UserPromptSubmit"] and "permissions" not in settings
+        assert list(settings["hooks"]) == ["UserPromptSubmit"] and "allow" not in settings.get("permissions", {})
+
+
+def test_codex_may_reach_zotero_from_the_cloud_folders_only(home: Path) -> None:
+    (home / ".codex").mkdir()
+    (home / ".codex" / "config.toml").write_text('model = "m"\n', encoding="utf-8")
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root))
+    kit.setup(setup_args(root))
+    assert "network_access = true" in (root / "chat" / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert not (root / "chat-local" / ".codex").exists()
+    user = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert user.startswith('model = "m"') and user.count(f'[projects."{(root / "chat").resolve().as_posix()}"]') == 1
+
+
+def test_only_the_local_folder_trims_its_prompt(home: Path) -> None:
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(json.dumps({"enabledPlugins": {"a@m": True, "b@m": False}}), encoding="utf-8")
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"wiki": {}}}), encoding="utf-8")
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root))
+    cloud = json.loads((root / "chat" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    local = json.loads((root / "chat-local" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert "permissions" not in cloud and "enabledPlugins" not in cloud
+    assert {"Skill", "mcp__wiki"} <= set(local["permissions"]["deny"]) and not {"Read", "Grep", "Glob", "Bash"} & set(local["permissions"]["deny"])
+    assert local["enabledPlugins"] == {"a@m": False}
+    assert kit.LOCAL_GUIDE in (root / "chat-local" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert kit.LOCAL_GUIDE not in (root / "chat" / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_the_panels_default_folder_is_set_up_once_and_captured(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -214,6 +214,8 @@ The search matches words, so it can miss a source that says the same thing in ot
 
 For the local model, load it with at least 32,768 tokens of context. Panel turns measured up to 21,738 input tokens per call, and a smaller window can drop the start of the prompt with no error. In LM Studio, run `lms load qwen/qwen3.5-9b --context-length 32768` and then `lms server start --bind 127.0.0.1`. In Ollama, set `OLLAMA_CONTEXT_LENGTH=32768` and restart it. `doctor --ask` sends one real turn to the local model and times it.
 
+Small models such as Gemma 4 E4B (`setup --local lmstudio --model gemma-4-e4b-it`) answer fast, but a local model has to read the whole prompt before its first word. Claude Code's tools, skills and plugins came to 24,078 tokens a call, 38 s on a Mac before Gemma said anything. So `chat-local` hides what a reading chat does not use: the web, task, plan and skill tools, your plugins and your own MCP servers. That brings it to about 11,000 tokens. Read, Grep, Glob, Bash (for `zotero-cli`), the source hook and `CLAUDE.md` stay. LM Studio also reuses an unchanged prompt start, so after the first question a library lookup with one tool call took 12 s. The cloud folders keep everything.
+
 On a machine with no Claude sign-in, the panel will not send, even in `chat-local`. Start Zotero with `python3.12 reading_room.py zotero` instead. That gives this one Zotero a placeholder token. Do not set the token for the whole machine, because it would override a real sign-in.
 
 ### Approvals
@@ -360,7 +362,7 @@ If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/
 
 ## Limits
 
-- macOS and LM Studio are not tested yet.
+- LM Studio with Gemma 4 E4B was tried on a Mac from the command line in `chat-local`, but not yet through the panel.
 - Wiki pages in the source list need a copy of the wiki on the machine (`--vault`).
 - The connections web knows only what OpenAlex knows. A paper with no DOI is placed only by an exact title, and OpenAlex has no abstract for many publishers' papers.
 - Same words, in your library is a word match on titles, abstracts and tags. It finds papers on the same topic but can miss one that uses other words.
