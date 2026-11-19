@@ -20,9 +20,12 @@ const GROUPS = {
     ["later", "Later work that cites several of yours", ""],
     ["expanded", "From expanding", "added when you expanded a paper"],
   ],
+  later: [
+    ["saved", "Saved to check later", "you saved it to check later"],
+  ],
 };
 // Where each group gathers: earlier work on the left, later work on the right, as on a timeline.
-const ANCHORS = { focal: [0, 0], references: [-480, 0], citing: [480, 0], related: [0, 340], library: [0, -320], mine: [0, 0], earlier: [-560, 0], later: [560, 0], expanded: [0, 440] };
+const ANCHORS = { focal: [0, 0], references: [-480, 0], citing: [480, 0], related: [0, 340], library: [0, -320], mine: [0, 0], earlier: [-560, 0], later: [560, 0], expanded: [0, 440], saved: [0, 0] };
 const MARKS = { have: "In your library, with a PDF", wanted: "In your library, no PDF here", new: "Not in your library" };
 
 const state = { web: null, byId: new Map(), selected: "", shown: new Set(), history: [], next: "replace", view: { x: 0, y: 0, k: 1 }, abstracts: new Map(), lonely: false };
@@ -105,6 +108,21 @@ document.addEventListener("rr-data", (event) => {
     status(message.key ? "Added to My Library. Zotero may find a PDF for it." : "Zotero did not add it.", !message.key);
     redraw();
   }
+  else if (message.type === "saved") {
+    for (const node of state.web.nodes) {
+      if (node.id === message.id || (message.doi && node.doi === message.doi)) {
+        node.saved = message.saved;
+      }
+    }
+    if (state.web.mode === "later" && !message.saved) {
+      state.web.nodes = state.web.nodes.filter((node) => node.id !== message.id);
+      state.byId.delete(message.id);
+      state.selected = "";
+    }
+    status(message.saved ? `Saved to check later (${message.count}). It stays on this computer, offline too.` : `Removed. ${message.count} left to check.`);
+    $("later").textContent = `Check later (${message.count})`;
+    redraw();
+  }
   else if (message.type === "error") {
     status(message.message, true);
   }
@@ -129,6 +147,12 @@ function show(web) {
     const parts = GROUPS.paper.map(([group, name]) => [count((node) => node.groups.includes(group)), name.toLowerCase()]).filter(([n]) => n);
     $("subtitle").textContent = `${[focal?.year, ...parts.map(([n, name]) => `${n} ${name}`)].filter(Boolean).join(" · ")} | ${marks}`;
   }
+  else if (web.mode === "later") {
+    $("title").textContent = "Papers to check later";
+    const report = web.report;
+    $("subtitle").textContent = `${web.nodes.length} saved | ${marks}`
+      + (report ? ` | added ${report.added}, already in your library ${report.already}, no DOI ${report.noDOI}, failed ${report.failed}` : "");
+  }
   else {
     const mine = count((node) => node.groups.includes("mine"));
     const links = web.edges.filter((edge) => state.byId.get(edge.source)?.groups.includes("mine") && state.byId.get(edge.target)?.groups.includes("mine")).length;
@@ -139,7 +163,13 @@ function show(web) {
   }
   const budget = web.budget || {};
   $("budget").textContent = budget.remaining != null ? `OpenAlex: ${budget.remaining} of ${budget.limit || "?"} requests left today` : "";
-  status(web.problem || (web.nodes.length < 2 ? "Nothing connected was found for this paper." : ""), !!web.problem);
+  const empty = web.mode === "later" ? (web.nodes.length ? "" : "Nothing saved yet. Select a new paper in any web and click Check later.")
+    : web.nodes.length < 2 ? "Nothing connected was found for this paper." : "";
+  status(web.problem || web.offline || empty, !!web.problem);
+  $("laterAll").hidden = web.mode !== "later" || !web.nodes.some((node) => node.mark === "new" && node.doi);
+  if (Number.isInteger(web.laterCount)) {
+    $("later").textContent = `Check later (${web.laterCount})`;
+  }
   $("back").disabled = !state.history.length;
   layout(true);
   filters();
@@ -431,13 +461,22 @@ function details() {
     button.addEventListener("click", () => expand(node));
     actions.append(button);
   }
+  if (node.mark === "new" && node.id !== state.web.focal && (node.wid || node.doi)) {
+    if (node.saved) {
+      action("Remove from Check later", { type: "later-remove", id: state.web.mode === "later" ? node.id : node.wid || `doi:${node.doi}` }, "");
+    }
+    else {
+      const work = { wid: node.wid, doi: node.doi, title: node.title, authors: node.authors, more: node.more, year: node.year, venue: node.venue, cites: node.cites, oa: node.oa, abstract: node.abstract };
+      action("Check later", { type: "later-add", work }, "");
+    }
+  }
   if (node.doi) {
     action("DOI page", { type: "link", doi: node.doi }, "");
   }
   if (node.oa) {
     action("Free copy online", { type: "link", url: node.oa }, "");
   }
-  const text = node.wid ? state.abstracts.get(node.wid) : "";
+  const text = node.abstract || (node.wid ? state.abstracts.get(node.wid) : "");
   $("d-abstract").textContent = text || "";
   if (node.wid && !text) {
     const button = html("button", "Show abstract");
@@ -505,7 +544,7 @@ function fit() {
   const xs = shown.map((node) => node.x);
   const ys = shown.map((node) => node.y);
   const [left, right, top, bottom] = [Math.min(...xs) - 60, Math.max(...xs) + 120, Math.min(...ys) - 40, Math.max(...ys) + 60];
-  const k = Math.min(box.width / (right - left), box.height / (bottom - top), 2.5);
+  const k = Math.min(box.width / (right - left), box.height / (bottom - top), shown.length < 5 ? 1.2 : 2.5); // a few papers stay a readable size
   state.view = { k, x: box.width / 2 - k * (left + right) / 2, y: box.height / 2 - k * (top + bottom) / 2 };
   applyView();
 }
@@ -564,11 +603,19 @@ $("sort").addEventListener("change", list);
 $("refresh").addEventListener("click", () => {
   const focal = state.web ? state.byId.get(state.web.focal) : null;
   state.next = "replace";
-  ask({ type: "refresh", mode: state.web?.mode, key: focal?.key, wid: focal?.wid }, "Asking OpenAlex again…");
+  ask({ type: "refresh", mode: state.web?.mode, key: focal?.key, wid: focal?.wid }, state.web?.mode === "later" ? "" : "Asking OpenAlex again…");
 });
 $("map").addEventListener("click", () => {
   state.next = "push";
   ask({ type: "map" }, "Mapping your library. The first time takes a minute…");
+});
+$("later").addEventListener("click", () => {
+  state.next = "push";
+  ask({ type: "later" }, "");
+});
+$("laterAll").addEventListener("click", () => {
+  state.next = "replace";
+  ask({ type: "later-add-all" }, "Adding the saved papers to My Library, one at a time…");
 });
 $("back").addEventListener("click", () => {
   const last = state.history.pop();
