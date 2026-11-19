@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.2.6](https://img.shields.io/badge/Reading_Room_Tools-0.2.6-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.3.1](https://img.shields.io/badge/Reading_Room_Tools-0.3.1-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -34,7 +34,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 |---|---|---|
 | Zotero Agent 0.15.2 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.2.6 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.3.1 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |
@@ -185,7 +185,7 @@ Some things are different on a Mac:
 
 ![The connections web for one paper, with the details and the list on the right.](docs/images/connections-web.png)
 
-- Click a paper for its details and buttons: Open PDF, Show in Zotero, Add to Zotero (by DOI, into My Library), DOI page, Free copy online, Show abstract.
+- Click a paper for its details and buttons: Open PDF, Show in Zotero, Add to Zotero (by DOI, into My Library), Check later, DOI page, Free copy online. The abstract shows under them when OpenAlex has one.
 - Expand, or a double-click, adds that paper's own 30 most cited neighbours to the web. Centre here makes it the middle paper, and the arrow at the top left goes back.
 - By year lays the papers out on a timeline.
 - The list on the right has the same papers, with a filter box and a sort.
@@ -193,7 +193,11 @@ Some things are different on a Mac:
 
 ![Map my library: your papers in green, with the earlier work several of them cite and the later work that cites several of them.](docs/images/library-map.png)
 
-The web uses OpenAlex, which is free and needs no sign-in. Without a key it allows about 1,000 requests a day, shared with everyone on your network. One paper takes about 4, and mapping a library of 450 items took about 20. Every answer is kept for 30 days, so a paper you have seen costs nothing, and Refresh asks again. For more, get a free key at openalex.org/settings/api and paste it in Tools > OpenAlex Key for Connections. Nothing is added to your library unless you click Add to Zotero.
+The web uses OpenAlex, which is free and needs no sign-in. Without a key it allows about 1,000 requests a day, shared with everyone on your network. One paper takes about 4, and mapping a library of 450 items took about 20. Every answer is kept, with each paper's title, authors, year, venue, citation count, links and the first 1,200 characters of its abstract. A paper you have seen costs nothing for 30 days, and Refresh asks again. For more, get a free key at openalex.org/settings/api and paste it in Tools > OpenAlex Key for Connections. Nothing is added to your library unless you click Add to Zotero.
+
+**Offline.** A web you have seen opens offline however old it is, and the status line says from which day. To have webs for papers you have not opened yet, Reading Room Tools fills the cache while Zotero is open and online: three minutes after Zotero starts and then every six hours, it fetches the webs of up to 25 papers in your library, the ones never fetched first. It stops at the first network failure, and when fewer than 250 of the day's OpenAlex requests are left, so your own clicks keep working. A library of 230 papers is filled in two or three days. To turn it off, set `extensions.rrtools.warmup` to `false` in Settings > Advanced > Config Editor.
+
+**Check later.** Select a paper you do not have and click Check later. It goes into a list on this computer, `<Zotero profile>/reading-room/check-later.json`, with its details and abstract, so this works offline too. Check later at the top of the web, or Tools > Papers to Check Later, shows the list, marked against your library, with Add to Zotero on each paper and Add all to Zotero for every paper with a DOI. Those need the network. A paper leaves the list once it is in your library.
 
 **Related sources.** Each answer ends with "Related in your library". Each source is marked:
 - `in library` or `have`: the paper is in Zotero, with a file.
@@ -362,7 +366,7 @@ git pull
 python3.12 reading_room.py plugins
 ```
 
-If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/ReadingRoom/plugins/reading-room-tools.xpi` again from Tools > Plugins. Then run `setup` again with the flags you used before.
+If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/ReadingRoom/plugins/reading-room-tools.xpi` again from Tools > Plugins and restart Zotero, because until then a window such as the connections web can still run the old code. Then run `setup` again with the flags you used before.
 
 ## When something goes wrong
 

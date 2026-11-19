@@ -4,15 +4,23 @@
  * words, with lines where those papers cite each other. For the whole library: how your papers cite each other, and
  * the papers several of them cite that you do not have yet.
  *
- * Metadata comes from OpenAlex. Nothing is downloaded but titles, years, counts and identifiers, and nothing is added
- * to the library unless you click Add. Every answer is cached for 30 days, because OpenAlex allows about 1,000
- * requests a day without a key. The same results go to <profile>/reading-room/ for the chat's source list.
+ * Metadata comes from OpenAlex. Nothing is downloaded but titles, abstracts, years, counts and identifiers, and
+ * nothing is added to the library unless you click Add. Every answer is kept, and asked again after 30 days, because
+ * OpenAlex allows about 1,000 requests a day without a key. Offline, a kept answer is used however old it is, so every
+ * web you have seen still opens. The same results go to <profile>/reading-room/ for the chat's source list.
+ *
+ * While Zotero is open and online, warmUp fills the cache for your library a few papers at a time, and Check later
+ * keeps papers you want to look at on this machine until you add them.
  */
 /* global Zotero, PathUtils, IOUtils */
 var RRConnections = {
   API: "https://api.openalex.org/works",
-  FIELDS: "id,doi,display_name,publication_year,cited_by_count,authorships,primary_location,open_access,referenced_works",
+  FIELDS: "id,doi,display_name,publication_year,cited_by_count,authorships,primary_location,open_access,referenced_works,abstract_inverted_index",
   MAX_AGE_DAYS: 30,
+  ABSTRACT_CHARS: 1200, // enough to judge a paper offline, small enough that a cached web stays a few hundred kB
+  WARM_PAPERS: 25, // per run, about 5 requests each
+  WARM_RESERVE: 250, // requests left for your own clicks before warm-up stops for the day
+  WARM_PAUSE_MS: 2000,
   CITING: 50,
   MAX_REFERENCES: 200,
   LOCAL_SIMILAR: 8,
@@ -26,6 +34,7 @@ var RRConnections = {
 
   budget: { remaining: null, limit: null },
   rowsCache: null,
+  warming: false,
 
   // ---- plain functions, tested in plugin/test_connections.mjs ----
 
@@ -60,7 +69,83 @@ var RRConnections = {
       year: record.publication_year ?? null, cites: record.cited_by_count ?? 0, authors: authors.slice(0, 3), more: authors.length > 3,
       venue: this.clean(record.primary_location?.source?.display_name), oa: String(record.open_access?.oa_url || ""),
       refs: (record.referenced_works || []).map((item) => this.wid(item)).filter(Boolean),
+      abstract: this.clean(this.abstract(record.abstract_inverted_index)).slice(0, this.ABSTRACT_CHARS),
     };
+  },
+
+  /** A kept answer while it is fresh; else a new one; else, when the network fails, the kept one however old. */
+  async keptOr(kept, ask, refresh = false) {
+    if (kept && !refresh && this.fresh(kept.retrieved_at)) {
+      return kept;
+    }
+    try {
+      return await ask();
+    }
+    catch (error) {
+      if (kept) {
+        return { ...kept, stale: true };
+      }
+      throw error;
+    }
+  },
+
+  /** Library papers whose web is not kept yet, or is older than 30 days: never-seen ones first, newest added first. */
+  warmQueue(rows, kept, limit = this.WARM_PAPERS) {
+    const age = (row) => (kept[row.key] ? Date.parse(kept[row.key]) || 0 : -1);
+    return rows.filter((row) => (row.doi || this.titleKey(row.title)) && !(kept[row.key] && this.fresh(kept[row.key])))
+      .sort((a, b) => age(a) - age(b) || String(b.added || "").localeCompare(String(a.added || ""))).slice(0, limit);
+  },
+
+  // ---- Check later: papers kept on this machine, with what you need to judge them offline ----
+
+  laterId(work) {
+    return work.wid || work.id && /^W\d+$/.test(work.id) && work.id || (work.doi ? `doi:${work.doi}` : "");
+  },
+
+  laterEntry(work, from = {}, now = new Date().toISOString()) {
+    const text = (value, size) => this.clean(value).slice(0, size);
+    const oa = /^https:\/\/\S+$/.test(String(work.oa || "")) ? String(work.oa) : "";
+    const wid = this.wid(work.wid || work.id);
+    return {
+      id: this.laterId({ wid, doi: this.normalDOI(work.doi) }), wid, doi: this.normalDOI(work.doi), title: text(work.title, 400),
+      authors: (Array.isArray(work.authors) ? work.authors : []).slice(0, 3).map((name) => text(name, 80)), more: !!work.more,
+      year: Number.isInteger(work.year) ? work.year : null, venue: text(work.venue, 200), cites: Number(work.cites) || 0, oa,
+      abstract: text(work.abstract, this.ABSTRACT_CHARS), from: { key: /^[A-Z0-9]{8}$/.test(String(from.key || "")) ? from.key : "", title: text(from.title, 300) },
+      saved_at: now,
+    };
+  },
+
+  laterAdd(list, entry) {
+    if (!entry.id || !entry.title || list.some((item) => item.id === entry.id || (entry.doi && item.doi === entry.doi))) {
+      return list;
+    }
+    return [entry, ...list];
+  },
+
+  laterRemove(list, id) {
+    return list.filter((item) => item.id !== id);
+  },
+
+  /** The saved papers as a web with no lines, so the same window can show them, marked against the library. */
+  laterWeb(list, library) {
+    const nodes = list.map((entry) => {
+      const made = this.node({ ...entry, id: entry.wid, refs: [] }, this.find(library, { id: entry.wid, doi: entry.doi, title: entry.title }), "saved");
+      made.id = entry.id;
+      made.saved = true;
+      made.note = [entry.from?.title ? `Found from ${entry.from.title}` : "", `saved ${String(entry.saved_at).slice(0, 10)}`].filter(Boolean).join(", ");
+      return made;
+    });
+    return { mode: "later", focal: "", nodes, edges: [], laterCount: list.length };
+  },
+
+  markSaved(web, list) {
+    const ids = new Set(list.map((entry) => entry.id));
+    const dois = new Set(list.map((entry) => entry.doi).filter(Boolean));
+    for (const node of web.nodes) {
+      node.saved = ids.has(this.laterId(node)) || (!!node.doi && dois.has(node.doi));
+    }
+    web.laterCount = list.length;
+    return web;
   },
 
   abstract(inverted) {
@@ -149,6 +234,7 @@ var RRConnections = {
       id: work.id || `zotero:${row?.key}`, wid: work.id || row?.wid || "", doi: work.doi || row?.doi || "",
       title: work.title || row?.title || "", year: work.year ?? row?.year ?? null, cites: work.cites ?? 0,
       authors: work.authors || row?.creators || [], more: !!work.more, venue: work.venue || "", oa: work.oa || "",
+      abstract: work.abstract || row?.abstract || "",
       key: row?.key || "", mark: this.mark(row), groups: [group], refs: work.refs || [], note: "",
     };
   },
@@ -348,33 +434,132 @@ var RRConnections = {
     return exact.length === 1 ? exact[0] : null;
   },
 
-  /** References, citing papers and similar papers for one work, cached for 30 days. */
+  /** References, citing papers and similar papers for one work, kept with the work itself. Offline, the kept ones. */
   async sectionsFor(focal, record, refresh = false) {
     const path = this.folder("openalex", `${focal.id}.json`);
-    const cached = refresh ? null : await this.readJSON(path, null);
-    if (cached && this.fresh(cached.retrieved_at)) {
-      return cached.sections;
-    }
-    const references = (await this.byIds(focal.refs.slice(0, this.MAX_REFERENCES))).sort((a, b) => (a.year || 0) - (b.year || 0));
-    const citing = (await this.getJSON(`${this.API}?filter=cites:${focal.id}&sort=cited_by_count:desc&per-page=${this.CITING}&select=${this.FIELDS}`))?.results || [];
-    const related = await this.byIds((record?.related_works || []).map((item) => this.wid(item)));
-    const sections = { references, citing: citing.map((item) => this.slim(item)), related };
-    await this.writeJSON(path, { retrieved_at: new Date().toISOString(), sections });
-    return sections;
+    return this.keptOr(await this.readJSON(path, null), async () => {
+      const references = (await this.byIds(focal.refs.slice(0, this.MAX_REFERENCES))).sort((a, b) => (a.year || 0) - (b.year || 0));
+      const citing = (await this.getJSON(`${this.API}?filter=cites:${focal.id}&sort=cited_by_count:desc&per-page=${this.CITING}&select=${this.FIELDS}`))?.results || [];
+      const related = await this.byIds((record?.related_works || []).map((item) => this.wid(item)));
+      const entry = { retrieved_at: new Date().toISOString(), focal, sections: { references, citing: citing.map((item) => this.slim(item)), related } };
+      await this.writeJSON(path, entry);
+      return entry;
+    }, refresh);
   },
 
   async focalWork(row, refresh = false) {
     const known = await this.readJSON(this.folder("items.json"), {});
     const stored = known[row.key];
-    if (!refresh && stored && this.fresh(stored.at)) {
-      return stored.work ? { work: stored.work, related: stored.related || [] } : null;
+    const kept = stored ? { ...stored, retrieved_at: stored.at } : null;
+    const found = await this.keptOr(kept, async () => {
+      const record = await this.recordFor(row);
+      const entry = { at: new Date().toISOString(), work: record ? this.slim(record) : null, related: (record?.related_works || []).map((item) => this.wid(item)).filter(Boolean) };
+      known[row.key] = entry;
+      await this.writeJSON(this.folder("items.json"), known);
+      return { ...entry, retrieved_at: entry.at };
+    }, refresh);
+    return found.work ? { work: found.work, related: found.related || [], stale: !!found.stale } : null;
+  },
+
+  sentence(text) {
+    const clean = String(text || "").trim();
+    return /[.!?]$/.test(clean) ? clean : `${clean}.`;
+  },
+
+  offlineNote(entry) {
+    return entry?.stale ? `Offline: showing what OpenAlex said on ${String(entry.retrieved_at).slice(0, 10)}.` : "";
+  },
+
+  // ---- Check later, kept in <profile>/reading-room/check-later.json ----
+
+  async laterList() {
+    return (await this.readJSON(this.folder("check-later.json"), { items: [] })).items || [];
+  },
+
+  async laterSave(list) {
+    await this.writeJSON(this.folder("check-later.json"), { written_at: new Date().toISOString(), items: list });
+    return list;
+  },
+
+  async laterShow(libraryID = Zotero.Libraries.userLibraryID) {
+    const web = this.laterWeb(await this.laterList(), this.makeLibrary(await this.libraryRows(libraryID)));
+    web.budget = this.budget;
+    return web;
+  },
+
+  /** Every saved paper with a DOI that is not in the library yet goes in, one at a time. Each one added leaves the list. */
+  async laterAddAll(libraryID = Zotero.Libraries.userLibraryID) {
+    let list = await this.laterList();
+    const library = this.makeLibrary(await this.libraryRows(libraryID));
+    const result = { added: 0, already: 0, noDOI: 0, failed: 0, problem: "" };
+    for (const entry of [...list]) {
+      if (this.find(library, { id: entry.wid, doi: entry.doi, title: entry.title })) {
+        result.already++;
+        list = this.laterRemove(list, entry.id);
+        continue;
+      }
+      if (!entry.doi) {
+        result.noDOI++;
+        continue;
+      }
+      try {
+        if (await this.addByDOI(entry.doi)) {
+          result.added++;
+          list = this.laterRemove(list, entry.id);
+        }
+        else {
+          result.failed++;
+        }
+      }
+      catch (error) {
+        result.failed++;
+        result.problem = String(error.message || error);
+      }
+      await this.laterSave(list);
     }
-    const record = await this.recordFor(row);
-    const work = record ? this.slim(record) : null;
-    const related = (record?.related_works || []).map((item) => this.wid(item)).filter(Boolean);
-    known[row.key] = { at: new Date().toISOString(), work, related };
-    await this.writeJSON(this.folder("items.json"), known);
-    return work ? { work, related } : null;
+    await this.laterSave(list);
+    return result;
+  },
+
+  /** Fills the cache for papers in the library while Zotero is open and online, so their webs open offline later.
+   * It stops at the first network failure, and leaves WARM_RESERVE of the day's OpenAlex requests for your own clicks. */
+  async warmUp(libraryID = Zotero.Libraries.userLibraryID) {
+    if (this.warming || Zotero.Prefs.get("extensions.rrtools.warmup", true) === false) {
+      return 0;
+    }
+    this.warming = true;
+    let done = 0;
+    try {
+      await this.getJSON(`${this.API}?per-page=1&select=id`); // offline or over budget: stop here, quietly
+      const rows = await this.libraryRows(libraryID);
+      const kept = {};
+      for (const row of rows) {
+        const entry = await this.readJSON(this.folder("connections", `${row.key}.json`), null);
+        if (entry?.retrieved_at) {
+          kept[row.key] = entry.retrieved_at;
+        }
+      }
+      for (const row of this.warmQueue(rows, kept)) {
+        if (this.budget.remaining !== null && this.budget.remaining < this.WARM_RESERVE) {
+          break;
+        }
+        const item = Zotero.Items.getByLibraryAndKey(libraryID, row.key);
+        const web = item ? await this.webForItem(item) : null;
+        if (web?.offline) {
+          break;
+        }
+        done++;
+        await Zotero.Promise.delay(this.WARM_PAUSE_MS);
+      }
+    }
+    catch (error) {
+      Zotero.debug(`Reading Room Tools: warm-up stopped after ${done}: ${error}`);
+    }
+    finally {
+      this.warming = false;
+    }
+    Zotero.debug(`Reading Room Tools: warm-up kept ${done} webs`);
+    return done;
   },
 
   async libraryRows(libraryID = Zotero.Libraries.userLibraryID) {
@@ -406,7 +591,7 @@ var RRConnections = {
         id: item.id, key: item.key, title: item.getDisplayTitle(), year: parseInt(field("date") && item.getField("date", true, true), 10) || null,
         doi: this.doiFrom({ DOI: field("DOI"), extra: field("extra"), url: field("url") }), abstract: field("abstractNote").slice(0, 2000),
         tags: item.getTags().map((tag) => tag.tag), creators: item.getCreators().slice(0, 3).map((person) => person.lastName || person.name).filter(Boolean),
-        have: !!pdf, pdf: pdf?.id ?? null, wid: known[item.key]?.work?.id || "",
+        have: !!pdf, pdf: pdf?.id ?? null, wid: known[item.key]?.work?.id || "", added: item.dateAdded || "",
       });
     }
     this.rowsCache = { libraryID, at: Date.now(), rows };
@@ -421,6 +606,7 @@ var RRConnections = {
     const local = this.similarInLibrary(focalRow, rows);
     let found = null;
     let problem = "";
+    let offline = "";
     try {
       found = await this.focalWork(focalRow, refresh);
       if (!found) {
@@ -428,39 +614,46 @@ var RRConnections = {
       }
     }
     catch (error) {
-      problem = String(error.message || error);
+      problem = `${this.sentence(error.message || error)} Only your own library is shown, because this paper's web was never fetched online.`;
+      offline = problem;
     }
-    let sections = {};
+    let kept = null;
     if (found) {
       try {
-        sections = await this.sectionsFor(found.work, { related_works: found.related }, refresh);
+        kept = await this.sectionsFor(found.work, { related_works: found.related }, refresh);
+        offline = this.offlineNote(kept);
       }
       catch (error) {
         problem = String(error.message || error);
+        offline = problem;
       }
     }
     const focal = found?.work || { id: "", doi: focalRow.doi, title: focalRow.title, year: focalRow.year, authors: focalRow.creators, refs: [] };
-    const web = this.paperWeb(focal, focalRow, sections, library, local);
+    const web = this.paperWeb(focal, focalRow, kept?.sections || {}, library, local);
     web.problem = problem;
+    web.offline = offline;
     web.budget = this.budget;
-    if (found) {
+    if (kept && !kept.stale) {
       await this.writeJSON(this.folder("connections", `${focalRow.key}.json`), this.agentEntry(web, focalRow));
     }
-    return web;
+    return this.markSaved(web, await this.laterList());
   },
 
-  /** The web around any OpenAlex work, for Expand and for a paper that is not in the library. */
+  /** The web around any OpenAlex work, for Expand and for a paper that is not in the library. Offline, the kept one. */
   async webForWork(wid, refresh = false) {
     const library = this.makeLibrary(await this.libraryRows());
-    const record = await this.getJSON(`${this.API}/${wid}?select=${this.FIELDS},related_works`);
-    if (!record) {
-      throw new Error("OpenAlex has no record for this paper.");
-    }
-    const focal = this.slim(record);
-    const sections = await this.sectionsFor(focal, record, refresh);
-    const web = this.paperWeb(focal, this.find(library, focal), sections, library, []);
+    const kept = await this.readJSON(this.folder("openalex", `${wid}.json`), null);
+    const entry = await this.keptOr(kept?.focal ? kept : null, async () => {
+      const record = await this.getJSON(`${this.API}/${wid}?select=${this.FIELDS},related_works`);
+      if (!record) {
+        throw new Error("OpenAlex has no record for this paper.");
+      }
+      return this.sectionsFor(this.slim(record), record, true);
+    }, refresh);
+    const web = this.paperWeb(entry.focal, this.find(library, entry.focal), entry.sections, library, []);
+    web.offline = this.offlineNote(entry);
     web.budget = this.budget;
-    return web;
+    return this.markSaved(web, await this.laterList());
   },
 
   async libraryMap(libraryID = Zotero.Libraries.userLibraryID, refresh = false) {
