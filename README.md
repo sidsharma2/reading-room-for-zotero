@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.3.1](https://img.shields.io/badge/Reading_Room_Tools-0.3.1-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.3.2](https://img.shields.io/badge/Reading_Room_Tools-0.3.2-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -34,7 +34,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 |---|---|---|
 | Zotero Agent 0.15.2 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.3.1 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.3.2 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |

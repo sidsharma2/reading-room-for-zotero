@@ -89,6 +89,18 @@ var RRConnections = {
     }
   },
 
+  /** When each paper was last tried: its kept web, or, for a paper OpenAlex could not match, the lookup in items.json.
+   * Without the second, unmatched papers came first in every warm-up and could take all of its turns. */
+  warmTried(webs, items) {
+    const tried = { ...webs };
+    for (const [key, entry] of Object.entries(items || {})) {
+      if (entry && !entry.work && entry.at && !(tried[key] && Date.parse(tried[key]) >= Date.parse(entry.at))) {
+        tried[key] = entry.at;
+      }
+    }
+    return tried;
+  },
+
   /** Library papers whose web is not kept yet, or is older than 30 days: never-seen ones first, newest added first. */
   warmQueue(rows, kept, limit = this.WARM_PAPERS) {
     const age = (row) => (kept[row.key] ? Date.parse(kept[row.key]) || 0 : -1);
@@ -120,6 +132,13 @@ var RRConnections = {
       return list;
     }
     return [entry, ...list];
+  },
+
+  /** Splits the list into papers still to check and papers that reached the library some other way (Zotero itself,
+   * the browser connector, sync). Those last would otherwise sit in the list as owned, with nothing left to do. */
+  laterReconcile(list, library) {
+    const owned = (entry) => !!this.find(library, { id: entry.wid, doi: entry.doi, title: entry.title });
+    return { list: list.filter((entry) => !owned(entry)), owned: list.filter(owned) };
   },
 
   laterRemove(list, id) {
@@ -482,7 +501,13 @@ var RRConnections = {
   },
 
   async laterShow(libraryID = Zotero.Libraries.userLibraryID) {
-    const web = this.laterWeb(await this.laterList(), this.makeLibrary(await this.libraryRows(libraryID)));
+    const library = this.makeLibrary(await this.libraryRows(libraryID));
+    const { list, owned } = this.laterReconcile(await this.laterList(), library);
+    if (owned.length) {
+      await this.laterSave(list);
+    }
+    const web = this.laterWeb(list, library);
+    web.cleared = owned.length;
     web.budget = this.budget;
     return web;
   },
@@ -539,7 +564,7 @@ var RRConnections = {
           kept[row.key] = entry.retrieved_at;
         }
       }
-      for (const row of this.warmQueue(rows, kept)) {
+      for (const row of this.warmQueue(rows, this.warmTried(kept, await this.readJSON(this.folder("items.json"), {})))) {
         if (this.budget.remaining !== null && this.budget.remaining < this.WARM_RESERVE) {
           break;
         }

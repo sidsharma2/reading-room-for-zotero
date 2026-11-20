@@ -25,11 +25,13 @@ import importlib.util
 import json
 import os
 import plistlib
+import queue
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -157,18 +159,31 @@ def claude_ai_servers(folder: Path, seconds: float = 60.0) -> list[str]:
                                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
     except OSError:
         return []
-    tools: list[str] = []
-    start = time.time()
-    try:
+    # A thread reads the output, so the deadline holds even when Claude Code stalls in the middle of a line.
+    lines: queue.Queue[str | None] = queue.Queue()
+
+    def read() -> None:
         for line in run.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=read, daemon=True).start()
+    tools: list[str] = []
+    deadline = time.monotonic() + seconds
+    try:
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                line = lines.get(timeout=left)
+            except queue.Empty:
+                break
+            if line is None:
+                break
             try:
                 event = json.loads(line)
             except ValueError:
                 continue
             if event.get("subtype") == "init":
                 tools = event.get("tools") or []
-                break
-            if time.time() - start > seconds:
                 break
     finally:
         run.kill()

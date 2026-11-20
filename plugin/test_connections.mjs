@@ -186,3 +186,22 @@ test("a message ends as a sentence before the next one starts", () => {
   assert.equal(C.sentence("Zotero is offline"), "Zotero is offline.");
   assert.equal(C.sentence("Done."), "Done.");
 });
+
+test("a paper OpenAlex could not match counts as tried, so warm-up moves on to others", () => {
+  const now = new Date().toISOString();
+  const rows = ["NOMATCH1", "NOMATCH2", "FRESHNEW"].map((key, i) => ({ key, doi: `10.1000/${i}`, added: "2024-01-01" }));
+  const items = { NOMATCH1: { at: now, work: null }, NOMATCH2: { at: now, work: null }, FRESHNEW: { at: now, work: { id: "W1" } } };
+  const tried = C.warmTried({}, items);
+  assert.deepEqual(plain(C.warmQueue(rows, tried).map((row) => row.key)), ["FRESHNEW"]);
+  const old = new Date(Date.now() - 60 * 86400000).toISOString();
+  assert.equal(C.warmTried({ NOMATCH1: now }, { NOMATCH1: { at: old, work: null } }).NOMATCH1, now);
+  assert.deepEqual(plain(C.warmQueue(rows.slice(0, 1), C.warmTried({}, { NOMATCH1: { at: old, work: null } })).map((row) => row.key)), ["NOMATCH1"]);
+});
+
+test("papers that reached the library some other way leave the Check later list", () => {
+  const library = C.makeLibrary([{ key: "HAVE0001", title: "Held", doi: "10.1000/held", have: true }]);
+  const list = [C.laterEntry({ doi: "10.1000/held", title: "Held" }), C.laterEntry({ doi: "10.1000/new", title: "Still to check" })];
+  const { list: left, owned } = C.laterReconcile(list, library);
+  assert.deepEqual(plain(left.map((entry) => entry.doi)), ["10.1000/new"]);
+  assert.deepEqual(plain(owned.map((entry) => entry.doi)), ["10.1000/held"]);
+});
