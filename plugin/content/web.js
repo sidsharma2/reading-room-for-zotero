@@ -151,7 +151,8 @@ function show(web) {
     $("title").textContent = "Papers to check later";
     const report = web.report;
     $("subtitle").textContent = `${web.nodes.length} saved | ${marks}`
-      + (report ? ` | added ${report.added}, already in your library ${report.already}, no DOI ${report.noDOI}, failed ${report.failed}` : "");
+      + (report ? ` | added ${report.added}, already in your library ${report.already}, no DOI ${report.noDOI}, failed ${report.failed}` : "")
+      + (web.cleared ? ` | ${web.cleared} now in your library, so taken off the list` : "");
   }
   else {
     const mine = count((node) => node.groups.includes("mine"));
@@ -461,14 +462,12 @@ function details() {
     button.addEventListener("click", () => expand(node));
     actions.append(button);
   }
-  if (node.mark === "new" && node.id !== state.web.focal && (node.wid || node.doi)) {
-    if (node.saved) {
-      action("Remove from Check later", { type: "later-remove", id: state.web.mode === "later" ? node.id : node.wid || `doi:${node.doi}` }, "");
-    }
-    else {
-      const work = { wid: node.wid, doi: node.doi, title: node.title, authors: node.authors, more: node.more, year: node.year, venue: node.venue, cites: node.cites, oa: node.oa, abstract: node.abstract };
-      action("Check later", { type: "later-add", work }, "");
-    }
+  if (node.saved) { // any saved paper can leave the list, whatever its mark
+    action("Remove from Check later", { type: "later-remove", id: state.web.mode === "later" ? node.id : node.wid || `doi:${node.doi}` }, "");
+  }
+  else if (node.mark === "new" && node.id !== state.web.focal && (node.wid || node.doi)) {
+    const work = { wid: node.wid, doi: node.doi, title: node.title, authors: node.authors, more: node.more, year: node.year, venue: node.venue, cites: node.cites, oa: node.oa, abstract: node.abstract };
+    action("Check later", { type: "later-add", work }, "");
   }
   if (node.doi) {
     action("DOI page", { type: "link", doi: node.doi }, "");

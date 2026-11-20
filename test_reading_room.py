@@ -237,6 +237,17 @@ def test_claude_ai_connectors_are_read_from_the_first_event(tmp_path: Path, monk
     assert kit.claude_ai_servers(tmp_path) == ["mcp__claude_ai_Gmail", "mcp__claude_ai_alphaXiv"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
+def test_a_stalled_claude_cannot_hang_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nprintf '{\"type\": \"sys'\nsleep 30\n", encoding="utf-8")  # half a line, then nothing
+    fake.chmod(0o755)
+    monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
+    start = kit.time.monotonic()
+    assert kit.claude_ai_servers(tmp_path, seconds=1) == []
+    assert kit.time.monotonic() - start < 10
+
+
 def test_setup_denies_the_connectors_in_the_local_folder_only(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(kit, "claude_ai_servers", lambda _folder: ["mcp__claude_ai_Gmail"])
     root = home / "ReadingRoom"
