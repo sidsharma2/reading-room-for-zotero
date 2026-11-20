@@ -63,6 +63,7 @@ var RRTools = {
       this.menuItem(doc, "rrtools-notes", "Save Annotations and Questions as a Note", () => this.saveCurrent(win)),
       this.menuItem(doc, "rrtools-web", "Connections Web for This Paper", () => this.openWeb(win)),
       this.menuItem(doc, "rrtools-map", "Map My Library", () => this.openWeb(win, null, "library")),
+      this.menuItem(doc, "rrtools-later", "Papers to Check Later", () => this.openWeb(win, null, "later")),
       this.menuItem(doc, "rrtools-openalex", "OpenAlex Key for Connections…", () => this.setOpenAlexKey(win)),
       this.menuItem(doc, "rrtools-plan", "Apply Library Plan…", () => this.applyPlan(win)),
       this.menuItem(doc, "rrtools-merge", "Merge Duplicates from a List…", () => this.mergeFromList(win)),
@@ -79,6 +80,10 @@ var RRTools = {
       this.exported = true;
       win.setTimeout(() => this.exportLibrary(), 20000);
     }
+    // Fill the connections cache while online, a few papers at a time, so the webs open offline later.
+    const warm = () => typeof RRConnections !== "undefined" && RRConnections.warmUp();
+    const warmFirst = win.setTimeout(warm, 3 * 60000);
+    const warmTimer = win.setInterval(warm, 6 * 3600000);
     const onKey = (event) => {
       if (event.getModifierState("Accel") && event.shiftKey && event.code === "KeyM") {
         event.preventDefault();
@@ -89,7 +94,7 @@ var RRTools = {
     win.addEventListener("keydown", onKey, true);
     // The chat panel draws its own box and can redraw it, so look for it now and then.
     const timer = win.setInterval(() => this.addPanelButton(win), 2000);
-    this.windows.set(win, { items, onKey, timer });
+    this.windows.set(win, { items, onKey, timer, warmFirst, warmTimer });
     this.addPanelButton(win);
   },
 
@@ -101,6 +106,8 @@ var RRTools = {
     state.items.forEach((item) => item.remove());
     win.removeEventListener("keydown", state.onKey, true);
     win.clearInterval(state.timer);
+    win.clearTimeout(state.warmFirst);
+    win.clearInterval(state.warmTimer);
     const root = this.panelRoot(win);
     root?.querySelector(".rr-eq")?.remove();
     root?.removeEventListener("click", this.onPanelClick, true);
@@ -231,9 +238,12 @@ var RRTools = {
     const wid = /^W\d+$/.test(String(action.wid || "")) ? action.wid : "";
     const doi = RRConnections.normalDOI(action.doi);
     const item = key ? Zotero.Items.getByLibraryAndKey(target.libraryID, key) : null;
-    if (["refresh", "centre", "map"].includes(action.type)) {
+    if (["refresh", "centre", "map", "later"].includes(action.type)) {
       if (action.type === "map" || action.mode === "library") {
         Object.assign(target, { mode: "library", key: "", wid: "" });
+      }
+      else if (action.type === "later" || action.mode === "later") {
+        Object.assign(target, { mode: "later", key: "", wid: "" });
       }
       else if (item?.isRegularItem()) {
         Object.assign(target, { mode: "paper", key: item.key, wid: "" });
@@ -250,7 +260,12 @@ var RRTools = {
       case "ready":
       case "refresh":
       case "centre":
+      case "later":
       case "map": {
+        if (target.mode === "later") {
+          setTitle("Papers to check later");
+          return { type: "web", web: await RRConnections.laterShow(target.libraryID) };
+        }
         if (target.mode === "library") {
           setTitle("Connections: your library");
           return { type: "web", web: await RRConnections.libraryMap(target.libraryID, refresh) };
@@ -289,7 +304,29 @@ var RRTools = {
           return null;
         }
         const added = await RRConnections.addByDOI(doi);
+        if (added) {
+          const list = await RRConnections.laterList();
+          await RRConnections.laterSave(list.filter((entry) => entry.doi !== doi));
+        }
         return { type: "added", doi, key: added?.key || "" };
+      }
+      case "later-add": {
+        // The page sends what it shows. laterEntry keeps only known fields, as plain text, with checked ids and links.
+        const from = target.key ? Zotero.Items.getByLibraryAndKey(target.libraryID, target.key) : null;
+        const entry = RRConnections.laterEntry(action.work || {}, { key: from?.key || "", title: from?.getDisplayTitle?.() || "" });
+        const list = RRConnections.laterAdd(await RRConnections.laterList(), entry);
+        await RRConnections.laterSave(list);
+        return { type: "saved", id: entry.id, doi: entry.doi, saved: list.some((item) => item.id === entry.id), count: list.length };
+      }
+      case "later-remove": {
+        const id = String(action.id || "").slice(0, 200);
+        const list = RRConnections.laterRemove(await RRConnections.laterList(), id);
+        await RRConnections.laterSave(list);
+        return { type: "saved", id, saved: false, count: list.length };
+      }
+      case "later-add-all": {
+        const result = await RRConnections.laterAddAll(target.libraryID);
+        return { type: "web", web: { ...await RRConnections.laterShow(target.libraryID), problem: result.problem, report: result } };
       }
       case "link": {
         const url = doi ? `https://doi.org/${doi}` : /^https:\/\/[^\s]+$/.test(String(action.url || "")) ? String(action.url) : "";

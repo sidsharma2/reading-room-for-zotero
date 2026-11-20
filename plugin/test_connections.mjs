@@ -24,7 +24,7 @@ test("an OpenAlex record becomes a small work with W ids", () => {
     authorships: [1, 2, 3, 4].map((n) => ({ author: { display_name: `Person ${n}` } })), primary_location: { source: { display_name: "Combust. Flame" } },
     open_access: { oa_url: "https://example.org/a.pdf" }, referenced_works: ["https://openalex.org/W1", "junk"],
   });
-  assert.deepEqual(plain(slim), { id: "W12", doi: "10.1000/ab", title: "Soot in flames", year: 2014, cites: 7, authors: ["Person 1", "Person 2", "Person 3"], more: true, venue: "Combust. Flame", oa: "https://example.org/a.pdf", refs: ["W1"] });
+  assert.deepEqual(plain(slim), { id: "W12", doi: "10.1000/ab", title: "Soot in flames", year: 2014, cites: 7, authors: ["Person 1", "Person 2", "Person 3"], more: true, venue: "Combust. Flame", oa: "https://example.org/a.pdf", refs: ["W1"], abstract: "" });
 });
 
 test("the abstract is rebuilt from OpenAlex's word index", () => {
@@ -113,4 +113,95 @@ test("the chat's copy keeps the sections and the library marks", () => {
 
 test("requests are split into groups of at most 100 ids", () => {
   assert.deepEqual(plain(C.chunks([1, 2, 3, 4, 5], 2)), [[1, 2], [3, 4], [5]]);
+});
+
+test("a work keeps its abstract, cut to a size that stays small offline", () => {
+  const slim = C.slim({ id: "W1", display_name: "T", abstract_inverted_index: { Soot: [0], forms: [1], "<b>late</b>": [2] } });
+  assert.equal(slim.abstract, "Soot forms late");
+  const long = C.slim({ id: "W1", display_name: "T", abstract_inverted_index: Object.fromEntries(Array.from({ length: 900 }, (_, i) => [`w${i}`, [i]])) });
+  assert.ok(long.abstract.length <= C.ABSTRACT_CHARS);
+});
+
+test("a kept answer is used while fresh, asked again when old, and used however old when the network fails", async () => {
+  const now = new Date().toISOString();
+  const old = new Date(Date.now() - 90 * 86400000).toISOString();
+  let asked = 0;
+  const ask = async () => { asked++; return { retrieved_at: now, sections: "new" }; };
+  const fail = async () => { throw new Error("offline"); };
+  assert.equal((await C.keptOr({ retrieved_at: now, sections: "kept" }, ask)).sections, "kept");
+  assert.equal(asked, 0);
+  assert.equal((await C.keptOr({ retrieved_at: old, sections: "kept" }, ask)).sections, "new");
+  assert.equal((await C.keptOr({ retrieved_at: now, sections: "kept" }, ask, true)).sections, "new");
+  const stale = await C.keptOr({ retrieved_at: old, sections: "kept" }, fail);
+  assert.equal(stale.sections, "kept");
+  assert.equal(stale.stale, true);
+  assert.match(C.offlineNote(stale), /^Offline: showing what OpenAlex said on \d{4}-\d{2}-\d{2}\.$/);
+  await assert.rejects(C.keptOr(null, fail), /offline/);
+});
+
+test("warm-up takes papers never fetched first, then the oldest, and skips fresh ones and ones it cannot place", () => {
+  const recent = new Date().toISOString();
+  const old = new Date(Date.now() - 60 * 86400000).toISOString();
+  const rows = [
+    { key: "FRESH001", doi: "10.1/a", added: "2024-01-01" },
+    { key: "OLD00001", doi: "10.1/b", added: "2024-01-01" },
+    { key: "NEVER001", doi: "10.1/c", added: "2020-01-01" },
+    { key: "NEVER002", doi: "10.1/d", added: "2023-01-01" },
+    { key: "NOIDEA01", doi: "", title: "short", added: "2025-01-01" },
+  ];
+  const queue = C.warmQueue(rows, { FRESH001: recent, OLD00001: old });
+  assert.deepEqual(plain(queue.map((row) => row.key)), ["NEVER002", "NEVER001", "OLD00001"]);
+  assert.equal(C.warmQueue(rows, {}, 1).length, 1);
+});
+
+test("a saved paper keeps only plain, checked fields, and is saved once", () => {
+  const entry = C.laterEntry({ wid: "W9", doi: "https://doi.org/10.1000/X", title: "<b>Soot</b> paper", authors: ["A", "B", "C", "D"], year: 2021,
+    oa: "javascript:alert(1)", abstract: "text", cites: "12", junk: "dropped" }, { key: "ABCD1234", title: "From here" }, "2026-11-18T00:00:00Z");
+  assert.deepEqual(plain(entry), { id: "W9", wid: "W9", doi: "10.1000/x", title: "Soot paper", authors: ["A", "B", "C"], more: false, year: 2021, venue: "", cites: 12,
+    oa: "", abstract: "text", from: { key: "ABCD1234", title: "From here" }, saved_at: "2026-11-18T00:00:00Z" });
+  const byDOI = C.laterEntry({ doi: "10.2000/y", title: "No OpenAlex id" }, { key: "bad key" });
+  assert.equal(byDOI.id, "doi:10.2000/y");
+  assert.equal(byDOI.from.key, "");
+  let list = C.laterAdd([], entry);
+  list = C.laterAdd(list, entry);
+  list = C.laterAdd(list, C.laterEntry({ wid: "W10", doi: "10.1000/x", title: "Same DOI" }));
+  assert.equal(list.length, 1);
+  assert.equal(C.laterAdd(list, C.laterEntry({ wid: "W11" })).length, 1); // no title, not saved
+  assert.equal(C.laterRemove(C.laterAdd(list, byDOI), "W9").length, 1);
+});
+
+test("saved papers show as a web marked against the library, and other webs mark what is saved", () => {
+  const library = C.makeLibrary([{ key: "HAVE0001", title: "A paper already held in the library here", doi: "10.1000/held", have: true }]);
+  const list = [C.laterEntry({ wid: "W1", doi: "10.1000/held", title: "A paper already held in the library here" }), C.laterEntry({ doi: "10.1000/new", title: "New one", year: 2020 }, { title: "Focal" })];
+  const web = C.laterWeb(list, library);
+  assert.equal(web.mode, "later");
+  assert.equal(web.laterCount, 2);
+  assert.deepEqual(plain(web.nodes.map((node) => [node.id, node.mark, node.saved])), [["W1", "have", true], ["doi:10.1000/new", "new", true]]);
+  assert.match(web.nodes[1].note, /^Found from Focal, saved \d{4}-\d{2}-\d{2}$/);
+  const other = C.markSaved({ nodes: [{ id: "W1", wid: "W1", doi: "" }, { id: "W5", wid: "W5", doi: "10.1000/new" }, { id: "W6", wid: "W6", doi: "" }] }, list);
+  assert.deepEqual(plain(other.nodes.map((node) => node.saved)), [true, true, false]);
+});
+
+test("a message ends as a sentence before the next one starts", () => {
+  assert.equal(C.sentence("Zotero is offline"), "Zotero is offline.");
+  assert.equal(C.sentence("Done."), "Done.");
+});
+
+test("a paper OpenAlex could not match counts as tried, so warm-up moves on to others", () => {
+  const now = new Date().toISOString();
+  const rows = ["NOMATCH1", "NOMATCH2", "FRESHNEW"].map((key, i) => ({ key, doi: `10.1000/${i}`, added: "2024-01-01" }));
+  const items = { NOMATCH1: { at: now, work: null }, NOMATCH2: { at: now, work: null }, FRESHNEW: { at: now, work: { id: "W1" } } };
+  const tried = C.warmTried({}, items);
+  assert.deepEqual(plain(C.warmQueue(rows, tried).map((row) => row.key)), ["FRESHNEW"]);
+  const old = new Date(Date.now() - 60 * 86400000).toISOString();
+  assert.equal(C.warmTried({ NOMATCH1: now }, { NOMATCH1: { at: old, work: null } }).NOMATCH1, now);
+  assert.deepEqual(plain(C.warmQueue(rows.slice(0, 1), C.warmTried({}, { NOMATCH1: { at: old, work: null } })).map((row) => row.key)), ["NOMATCH1"]);
+});
+
+test("papers that reached the library some other way leave the Check later list", () => {
+  const library = C.makeLibrary([{ key: "HAVE0001", title: "Held", doi: "10.1000/held", have: true }]);
+  const list = [C.laterEntry({ doi: "10.1000/held", title: "Held" }), C.laterEntry({ doi: "10.1000/new", title: "Still to check" })];
+  const { list: left, owned } = C.laterReconcile(list, library);
+  assert.deepEqual(plain(left.map((entry) => entry.doi)), ["10.1000/new"]);
+  assert.deepEqual(plain(owned.map((entry) => entry.doi)), ["10.1000/held"]);
 });

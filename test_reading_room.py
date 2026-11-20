@@ -47,6 +47,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(folder))
     monkeypatch.setenv("USERPROFILE", str(folder))
     monkeypatch.setenv("APPDATA", str(folder / "AppData"))
+    monkeypatch.setattr(kit, "claude_ai_servers", lambda _folder: [])
     return folder
 
 
@@ -211,7 +212,87 @@ def test_auto_approval_is_off_unless_asked_for(home: Path) -> None:
     kit.setup(setup_args(root))
     for name in ("chat", "chat-local"):
         settings = json.loads((root / name / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        assert list(settings["hooks"]) == ["UserPromptSubmit"] and "permissions" not in settings
+        assert list(settings["hooks"]) == ["UserPromptSubmit"] and "allow" not in settings.get("permissions", {})
+
+
+def test_codex_may_reach_zotero_from_the_cloud_folders_only(home: Path) -> None:
+    (home / ".codex").mkdir()
+    (home / ".codex" / "config.toml").write_text('model = "m"\n', encoding="utf-8")
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root))
+    kit.setup(setup_args(root))
+    assert "network_access = true" in (root / "chat" / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert not (root / "chat-local" / ".codex").exists()
+    user = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert user.startswith('model = "m"') and user.count(f'[projects."{(root / "chat").resolve().as_posix()}"]') == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
+def test_claude_ai_connectors_are_read_from_the_first_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = tmp_path / "claude"
+    init = {"type": "system", "subtype": "init", "tools": ["Read", "mcp__claude_ai_Gmail__send", "mcp__claude_ai_Gmail__read", "mcp__claude_ai_alphaXiv__find", "mcp__wiki__x"]}
+    fake.write_text(f"#!/bin/sh\necho 'not json'\necho '{json.dumps(init)}'\nsleep 30\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
+    assert kit.claude_ai_servers(tmp_path) == ["mcp__claude_ai_Gmail", "mcp__claude_ai_alphaXiv"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
+def test_a_stalled_claude_cannot_hang_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nprintf '{\"type\": \"sys'\nsleep 30\n", encoding="utf-8")  # half a line, then nothing
+    fake.chmod(0o755)
+    monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
+    start = kit.time.monotonic()
+    assert kit.claude_ai_servers(tmp_path, seconds=1) == []
+    assert kit.time.monotonic() - start < 10
+
+
+def test_setup_denies_the_connectors_in_the_local_folder_only(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(kit, "claude_ai_servers", lambda _folder: ["mcp__claude_ai_Gmail"])
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root))
+    local = json.loads((root / "chat-local" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert {"mcp__claude_ai_Gmail", "Write", "Edit"} <= set(local["permissions"]["deny"])
+    assert "permissions" not in json.loads((root / "chat" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert 'model_reasoning_effort = "medium"' in (root / "chat" / ".codex" / "config.toml").read_text(encoding="utf-8")
+
+
+def test_local_ready_loads_only_when_the_context_is_short(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root, "lmstudio", "gemma"))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(kit, "lms_path", lambda: "lms")
+    monkeypatch.setattr(kit.subprocess, "run", lambda words, **_: calls.append(words) or subprocess.CompletedProcess(words, 0, "", ""))
+    args = argparse.Namespace(root=str(root))
+    monkeypatch.setattr(kit, "loaded_context", lambda *_: 32768)
+    kit.local_ready(args)
+    assert [c[1] for c in calls] == ["server"]
+    calls.clear()
+    contexts = iter([4096, 32768])
+    monkeypatch.setattr(kit, "loaded_context", lambda *_: next(contexts))
+    kit.local_ready(args)
+    assert [c[1] for c in calls] == ["server", "unload", "load"] and "32768" in calls[-1]
+
+
+def test_the_autoload_job_runs_local_ready_at_login(tmp_path: Path) -> None:
+    agent = kit.autoload_agent(tmp_path)
+    assert agent["RunAtLoad"] and "StartInterval" not in agent and agent["ProgramArguments"][-1] == "local-ready"
+
+
+def test_only_the_local_folder_trims_its_prompt(home: Path) -> None:
+    (home / ".claude").mkdir()
+    (home / ".claude" / "settings.json").write_text(json.dumps({"enabledPlugins": {"a@m": True, "b@m": False}}), encoding="utf-8")
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"wiki": {}}}), encoding="utf-8")
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root))
+    cloud = json.loads((root / "chat" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    local = json.loads((root / "chat-local" / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert "permissions" not in cloud and "enabledPlugins" not in cloud
+    assert {"Skill", "mcp__wiki"} <= set(local["permissions"]["deny"]) and not {"Read", "Grep", "Glob", "Bash"} & set(local["permissions"]["deny"])
+    assert local["enabledPlugins"] == {"a@m": False}
+    assert kit.LOCAL_GUIDE in (root / "chat-local" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert kit.LOCAL_GUIDE not in (root / "chat" / "CLAUDE.md").read_text(encoding="utf-8")
 
 
 def test_the_panels_default_folder_is_set_up_once_and_captured(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Reading Room Tools",
-  "version": "0.2.6",
+  "version": "0.3.2",
   "description": "An equation editor for annotations and the chat panel, a button that saves annotations and questions as a note, and a connections web of what a paper cites, what cites it and what is similar.",
   "author": "Siddharth Sharma",
   "homepage_url": "https://github.com/sidsharma2/reading-room-for-zotero",

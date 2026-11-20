@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.2.6](https://img.shields.io/badge/Reading_Room_Tools-0.2.6-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.3.2](https://img.shields.io/badge/Reading_Room_Tools-0.3.2-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -34,7 +34,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 |---|---|---|
 | Zotero Agent 0.15.2 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.2.6 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.3.2 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |
@@ -185,7 +185,7 @@ Some things are different on a Mac:
 
 ![The connections web for one paper, with the details and the list on the right.](docs/images/connections-web.png)
 
-- Click a paper for its details and buttons: Open PDF, Show in Zotero, Add to Zotero (by DOI, into My Library), DOI page, Free copy online, Show abstract.
+- Click a paper for its details and buttons: Open PDF, Show in Zotero, Add to Zotero (by DOI, into My Library), Check later, DOI page, Free copy online. The abstract shows under them when OpenAlex has one.
 - Expand, or a double-click, adds that paper's own 30 most cited neighbours to the web. Centre here makes it the middle paper, and the arrow at the top left goes back.
 - By year lays the papers out on a timeline.
 - The list on the right has the same papers, with a filter box and a sort.
@@ -193,7 +193,11 @@ Some things are different on a Mac:
 
 ![Map my library: your papers in green, with the earlier work several of them cite and the later work that cites several of them.](docs/images/library-map.png)
 
-The web uses OpenAlex, which is free and needs no sign-in. Without a key it allows about 1,000 requests a day, shared with everyone on your network. One paper takes about 4, and mapping a library of 450 items took about 20. Every answer is kept for 30 days, so a paper you have seen costs nothing, and Refresh asks again. For more, get a free key at openalex.org/settings/api and paste it in Tools > OpenAlex Key for Connections. Nothing is added to your library unless you click Add to Zotero.
+The web uses OpenAlex, which is free and needs no sign-in. Without a key it allows about 1,000 requests a day, shared with everyone on your network. One paper takes about 4, and mapping a library of 450 items took about 20. Every answer is kept, with each paper's title, authors, year, venue, citation count, links and the first 1,200 characters of its abstract. A paper you have seen costs nothing for 30 days, and Refresh asks again. For more, get a free key at openalex.org/settings/api and paste it in Tools > OpenAlex Key for Connections. Nothing is added to your library unless you click Add to Zotero.
+
+**Offline.** A web you have seen opens offline however old it is, and the status line says from which day. To have webs for papers you have not opened yet, Reading Room Tools fills the cache while Zotero is open and online: three minutes after Zotero starts and then every six hours, it fetches the webs of up to 25 papers in your library, the ones never fetched first. It stops at the first network failure, and when fewer than 250 of the day's OpenAlex requests are left, so your own clicks keep working. A library of 230 papers is filled in two or three days. To turn it off, set `extensions.rrtools.warmup` to `false` in Settings > Advanced > Config Editor.
+
+**Check later.** Select a paper you do not have and click Check later. It goes into a list on this computer, `<Zotero profile>/reading-room/check-later.json`, with its details and abstract, so this works offline too. Check later at the top of the web, or Tools > Papers to Check Later, shows the list, marked against your library, with Add to Zotero on each paper and Add all to Zotero for every paper with a DOI. Those need the network. A paper leaves the list once it is in your library.
 
 **Related sources.** Each answer ends with "Related in your library". Each source is marked:
 - `in library` or `have`: the paper is in Zotero, with a file.
@@ -212,7 +216,21 @@ The search matches words, so it can miss a source that says the same thing in ot
 | Claude or Codex on your plan | `~/Documents/Zotero-Agent` (the default) or `~/ReadingRoom/chat` | Sign-in and network |
 | The local model | `~/ReadingRoom/chat-local` | The local server running |
 
+For Codex, `setup` writes `.codex/config.toml` in each cloud folder. `zotero-cli` reads the library through Zotero's server on your own machine, and Codex's default sandbox blocks that ("Operation not permitted"), so the file lets Codex use the network from that folder only. It also sets medium reasoning effort, which answers reading questions faster than high. Codex reads such a file only in a trusted folder, so `setup` marks the folder trusted in `~/.codex/config.toml`.
+
 For the local model, load it with at least 32,768 tokens of context. Panel turns measured up to 21,738 input tokens per call, and a smaller window can drop the start of the prompt with no error. In LM Studio, run `lms load qwen/qwen3.5-9b --context-length 32768` and then `lms server start --bind 127.0.0.1`. In Ollama, set `OLLAMA_CONTEXT_LENGTH=32768` and restart it. `doctor --ask` sends one real turn to the local model and times it.
+
+Small models such as Gemma 4 E4B (`setup --local lmstudio --model gemma-4-e4b-it`) answer fast, but a local model has to read the whole prompt before its first word. Claude Code's tools, skills and plugins came to 24,078 tokens a call, 38 s on a Mac before Gemma said anything. So `chat-local` hides what a reading chat does not use: the web, task, plan, skill, Write and Edit tools, your plugins, your own MCP servers and your claude.ai connectors. That brings it to about 12,700 tokens. Read, Grep, Glob, Bash (for `zotero-cli`), the source hook and `CLAUDE.md` stay. LM Studio also reuses an unchanged prompt start, so a short answer then takes about 1 s and a library lookup with one tool call about 12 s. The cloud folders keep everything.
+
+The claude.ai connectors (Gmail, Notion, alphaXiv and the rest) appear once Claude Code is signed in. With them a call went over 32,768 tokens and LM Studio refused every turn. Claude Code only skips them when told so before it starts, so `setup` asks it which connectors it has and denies each one in `chat-local`. Run `setup` again after you add a connector.
+
+After a restart LM Studio may load the model with too little context. This loads it with 32,768 at each login, and does nothing when it is already loaded that way:
+
+```bash
+python3.12 reading_room.py autoload
+```
+
+`local-ready` does the same once, by hand, and `autoload --remove` takes the login job away.
 
 On a machine with no Claude sign-in, the panel will not send, even in `chat-local`. Start Zotero with `python3.12 reading_room.py zotero` instead. That gives this one Zotero a placeholder token. Do not set the token for the whole machine, because it would override a real sign-in.
 
@@ -348,7 +366,7 @@ git pull
 python3.12 reading_room.py plugins
 ```
 
-If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/ReadingRoom/plugins/reading-room-tools.xpi` again from Tools > Plugins. Then run `setup` again with the flags you used before.
+If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/ReadingRoom/plugins/reading-room-tools.xpi` again from Tools > Plugins and restart Zotero, because until then a window such as the connections web can still run the old code. Then run `setup` again with the flags you used before.
 
 ## When something goes wrong
 
@@ -360,7 +378,7 @@ If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/
 
 ## Limits
 
-- macOS and LM Studio are not tested yet.
+- LM Studio with Gemma 4 E4B was tried on a Mac from the command line in `chat-local`, but not yet through the panel.
 - Wiki pages in the source list need a copy of the wiki on the machine (`--vault`).
 - The connections web knows only what OpenAlex knows. A paper with no DOI is placed only by an exact title, and OpenAlex has no abstract for many publishers' papers.
 - Same words, in your library is a word match on titles, abstracts and tags. It finds papers on the same topic but can miss one that uses other words.
