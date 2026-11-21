@@ -278,7 +278,9 @@ def write_codex_config(folder: Path) -> None:
         return
     user = home / "config.toml"
     text = user.read_text(encoding="utf-8") if user.exists() else ""
-    header = f'[projects."{folder.resolve().as_posix()}"]'
+    # Codex keys each folder by its native path: C:\Users\... on Windows, where it ignored a key written with / in place
+    # of \. json.dumps gives a valid TOML string for both, with the backslashes escaped.
+    header = f"[projects.{json.dumps(str(folder.resolve()))}]"
     if header not in text:
         user.write_text(f"{text.rstrip()}\n\n{header}\ntrust_level = \"trusted\"\n".lstrip("\n"), encoding="utf-8", newline="\n")
 
@@ -710,7 +712,22 @@ def schedule(args: argparse.Namespace) -> int:
 
 
 AUTOLOAD_LABEL = "io.github.sidsharma2.reading-room-local"
-AUTOLOAD_TASK = "Reading Room local model"
+AUTOLOAD_NAME = "Reading Room local model"
+
+
+def startup_file() -> Path:
+    """Windows runs what is in this folder at each login of this user. A scheduled task with a logon trigger needs an
+    elevated prompt, because schtasks registers the trigger for any user, so a file here is used instead."""
+    appdata = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{AUTOLOAD_NAME}.cmd"
+
+
+def startup_script(root: Path) -> str:
+    """start returns at once, so the console window closes, and pythonw runs local-ready with no window of its own."""
+    line = subprocess.list2cmdline(autoload_agent(root)["ProgramArguments"])
+    return ("@echo off\r\nchcp 65001 >nul\r\n"
+            "rem Reading Room: load the local model with enough context at login. reading_room.py autoload --remove deletes this file.\r\n"
+            f'start "" /min {line}\r\n')
 
 
 def lms_path() -> str | None:
@@ -773,12 +790,14 @@ def autoload(args: argparse.Namespace) -> int:
         print(f"the local model is loaded at each login; log at {root / 'local-model.log'}")
         return 0
     if sys.platform == "win32":
+        file = startup_file()
         if args.remove:
-            subprocess.run(["schtasks", "/Delete", "/F", "/TN", AUTOLOAD_TASK], check=True)
+            file.unlink(missing_ok=True)
+            print("the local model is no longer loaded at login")
             return 0
-        line = subprocess.list2cmdline(autoload_agent(root)["ProgramArguments"])
-        subprocess.run(["schtasks", "/Create", "/F", "/SC", "ONLOGON", "/TN", AUTOLOAD_TASK, "/TR", line], check=True)
-        print(f"the local model is loaded at each login by the task '{AUTOLOAD_TASK}'")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(startup_script(root), encoding="utf-8", newline="")
+        print(f"the local model is loaded at each login by {file}")
         return 0
     print("Run this at login: " + " ".join(autoload_agent(root)["ProgramArguments"]))
     return 0

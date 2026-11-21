@@ -224,24 +224,33 @@ def test_codex_may_reach_zotero_from_the_cloud_folders_only(home: Path) -> None:
     assert "network_access = true" in (root / "chat" / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert not (root / "chat-local" / ".codex").exists()
     user = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
-    assert user.startswith('model = "m"') and user.count(f'[projects."{(root / "chat").resolve().as_posix()}"]') == 1
+    key = f"[projects.{json.dumps(str((root / 'chat').resolve()))}]"  # the native path, which is what Codex matches on Windows
+    assert user.startswith('model = "m"') and user.count(key) == 1
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
+def fake_claude(folder: Path, body: str) -> Path:
+    """A stand-in for claude that runs this Python body: a shell script on macOS and Linux, a .cmd file on Windows."""
+    script = folder / "fake_claude.py"
+    script.write_text(body, encoding="utf-8")
+    if sys.platform == "win32":
+        launcher = folder / "claude.cmd"
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        launcher = folder / "claude"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        launcher.chmod(0o755)
+    return launcher
+
+
 def test_claude_ai_connectors_are_read_from_the_first_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = tmp_path / "claude"
     init = {"type": "system", "subtype": "init", "tools": ["Read", "mcp__claude_ai_Gmail__send", "mcp__claude_ai_Gmail__read", "mcp__claude_ai_alphaXiv__find", "mcp__wiki__x"]}
-    fake.write_text(f"#!/bin/sh\necho 'not json'\necho '{json.dumps(init)}'\nsleep 30\n", encoding="utf-8")
-    fake.chmod(0o755)
+    fake = fake_claude(tmp_path, f"import time\nprint('not json', flush=True)\nprint({json.dumps(json.dumps(init))}, flush=True)\ntime.sleep(5)\n")
     monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
     assert kit.claude_ai_servers(tmp_path) == ["mcp__claude_ai_Gmail", "mcp__claude_ai_alphaXiv"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
 def test_a_stalled_claude_cannot_hang_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = tmp_path / "claude"
-    fake.write_text("#!/bin/sh\nprintf '{\"type\": \"sys'\nsleep 30\n", encoding="utf-8")  # half a line, then nothing
-    fake.chmod(0o755)
+    fake = fake_claude(tmp_path, "import sys, time\nsys.stdout.write('{\"type\": \"sys')\nsys.stdout.flush()\ntime.sleep(5)\n")  # half a line, then nothing
     monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
     start = kit.time.monotonic()
     assert kit.claude_ai_servers(tmp_path, seconds=1) == []
@@ -278,6 +287,24 @@ def test_local_ready_loads_only_when_the_context_is_short(home: Path, monkeypatc
 def test_the_autoload_job_runs_local_ready_at_login(tmp_path: Path) -> None:
     agent = kit.autoload_agent(tmp_path)
     assert agent["RunAtLoad"] and "StartInterval" not in agent and agent["ProgramArguments"][-1] == "local-ready"
+
+
+def test_windows_autoload_is_a_file_in_the_startup_folder(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A logon task needs an elevated prompt; the Startup folder does not, and removing the file undoes it."""
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root, "lmstudio", "gemma"))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setattr(kit.sys, "platform", "win32")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(kit.subprocess, "run", lambda words, **_: calls.append(words) or subprocess.CompletedProcess(words, 0, "", ""))
+    kit.autoload(argparse.Namespace(root=str(root), remove=False))
+    file = kit.startup_file()
+    text = file.read_text(encoding="utf-8")
+    assert file.parent.name == "Startup" and str(home) in str(file)
+    assert text.startswith("@echo off") and 'start "" /min' in text and text.rstrip().endswith("local-ready")
+    assert not calls, "no scheduled task, so nothing needs an elevated prompt"
+    kit.autoload(argparse.Namespace(root=str(root), remove=True))
+    assert not file.exists()
 
 
 def test_only_the_local_folder_trims_its_prompt(home: Path) -> None:

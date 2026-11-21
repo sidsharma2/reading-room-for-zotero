@@ -216,7 +216,7 @@ The search matches words, so it can miss a source that says the same thing in ot
 | Claude or Codex on your plan | `~/Documents/Zotero-Agent` (the default) or `~/ReadingRoom/chat` | Sign-in and network |
 | The local model | `~/ReadingRoom/chat-local` | The local server running |
 
-For Codex, `setup` writes `.codex/config.toml` in each cloud folder. `zotero-cli` reads the library through Zotero's server on your own machine, and Codex's default sandbox blocks that ("Operation not permitted"), so the file lets Codex use the network from that folder only. It also sets medium reasoning effort, which answers reading questions faster than high. Codex reads such a file only in a trusted folder, so `setup` marks the folder trusted in `~/.codex/config.toml`.
+For Codex, `setup` writes `.codex/config.toml` in each cloud folder. `zotero-cli` reads the library through Zotero's server on your own machine, and on a Mac Codex's default sandbox blocks that ("Operation not permitted"), so the file lets Codex use the network from that folder only. Codex's sandbox on Windows lets it through either way. It also sets medium reasoning effort, which answers reading questions faster than high. Codex reads such a file only in a trusted folder, so `setup` marks the folder trusted in `~/.codex/config.toml`.
 
 For the local model, load it with at least 32,768 tokens of context. Panel turns measured up to 21,738 input tokens per call, and a smaller window can drop the start of the prompt with no error. In LM Studio, run `lms load qwen/qwen3.5-9b --context-length 32768` and then `lms server start --bind 127.0.0.1`. In Ollama, set `OLLAMA_CONTEXT_LENGTH=32768` and restart it. `doctor --ask` sends one real turn to the local model and times it.
 
@@ -230,7 +230,7 @@ After a restart LM Studio may load the model with too little context. This loads
 python3.12 reading_room.py autoload
 ```
 
-`local-ready` does the same once, by hand, and `autoload --remove` takes the login job away.
+On a Mac this is a launchd job. On Windows it is a small file, `Reading Room local model.cmd`, in your Startup folder, because a scheduled task that runs at login needs an administrator prompt. `local-ready` does the same once, by hand, and `autoload --remove` takes the login job or the file away.
 
 On a machine with no Claude sign-in, the panel will not send, even in `chat-local`. Start Zotero with `python3.12 reading_room.py zotero` instead. That gives this one Zotero a placeholder token. Do not set the token for the whole machine, because it would override a real sign-in.
 
@@ -352,7 +352,7 @@ A search that fails, for example because OpenAlex's free daily allowance is spen
 ## What leaves your machine
 
 - Your questions, the selected text, cropped figures and the pages the agent reads go to the model you chose: your Claude or ChatGPT account, or the local model, which keeps them on the machine.
-- The connections web sends OpenAlex the DOI of each paper you open, or its title when it has no DOI. Map my library sends the DOIs of all your papers. `papers.py dois` sends titles to Crossref, OpenAlex and DataCite. None of these needs an account.
+- The connections web sends OpenAlex the DOI of each paper you open, or its title when it has no DOI. Map my library sends the DOIs of all your papers. While Zotero is open and online, the warm-up sends those of up to 25 library papers every six hours, until it is turned off. `papers.py dois` sends titles to Crossref, OpenAlex and DataCite. None of these needs an account.
 - Records stay in `~/ReadingRoom/capture` unless you set `--capture-remote`. PDFs go only to the folder you give `--papers-folder`.
 - Nothing is sent to the author of this repository.
 
