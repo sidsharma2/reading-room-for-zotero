@@ -12,9 +12,9 @@ import zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-MATHLIVE_VERSION = "0.111.1"
+MATHLIVE_VERSION = "0.111.4"
 MATHLIVE_URL = f"https://registry.npmjs.org/mathlive/-/mathlive-{MATHLIVE_VERSION}.tgz"
-MATHLIVE_SHA512 = "RVaC7NO02Lmx3ZNUxOHR2xCRpcvTfBb2BtdgV60cTanAMufaUkWcPPB2VxChcsNeL+0rTQKqOPDYxXLPOXJI+A=="
+MATHLIVE_SHA512 = "1E5EOQnUHWn+KfEXaDTmuyxRWZrZw4WlQFyZLzJmjKEPdaX4WAnFqVfZb36mhulykcIl7/W7gKkTmutP2/9wjQ=="
 CACHE = HERE / ".cache" / f"mathlive-{MATHLIVE_VERSION}.tgz"
 OUTPUT = HERE / "reading-room-tools.xpi"
 OURS = ["manifest.json", "bootstrap.js", "connections.js", "organise.js", "tools.js", "content/web.xhtml", "content/web-host.js", "content/web.html", "content/web.css", "content/web.js", "content/host.xhtml", "content/host.js", "content/equation.html", "content/equation.js", "content/equation.css"]

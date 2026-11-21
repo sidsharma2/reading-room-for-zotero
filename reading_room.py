@@ -35,6 +35,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -59,12 +60,12 @@ PING = "Reply with exactly the single word: pong"
 LOCAL_DENY = ["Task", "Skill", "WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "CronCreate", "CronDelete", "CronList",
               "ScheduleWakeup", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode", "TaskOutput", "TaskStop",
               "ListMcpResourcesTool", "ReadMcpResourceTool", "AskUserQuestion", "Write", "Edit"]
-ZOTERO_CLI = "uv tool install zotero-mcp-server==0.15.2"
+ZOTERO_CLI = "uv tool install zotero-mcp-server==0.17.3"
 MIN_PYTHON = (3, 10)
 # The two plugins come from their authors' releases, pinned and hash checked. Both are AGPL, so they are not copied here.
 THIRD_PARTY = {
-    "zotero-agent.xpi": ("https://github.com/54yyyu/zotero-mcp/releases/download/v0.15.2/zotero-agent.xpi",
-                         "9a4ee266870252e7da61518b3b55351415d8b540a60471d7cef11ea79ee2b33c"),
+    "zotero-agent.xpi": ("https://github.com/54yyyu/zotero-mcp/releases/download/v0.17.3/zotero-agent.xpi",
+                         "8880007d96b7f21d99b4d99af249a0ebecd789919c011122fcbed2850241a038"),
     "zotero-annotation-markdown.xpi": ("https://github.com/qrkks/zotero-annotation-markdown/releases/download/v0.16.4/zotero-annotation-markdown.xpi",
                                        "39b5557a0b5854584d2535b1362d1703422138e8a713a8ea2673a828ce78f16c"),
 }
@@ -278,7 +279,9 @@ def write_codex_config(folder: Path) -> None:
         return
     user = home / "config.toml"
     text = user.read_text(encoding="utf-8") if user.exists() else ""
-    header = f'[projects."{folder.resolve().as_posix()}"]'
+    # Codex keys each folder by its native path: C:\Users\... on Windows, where it ignored a key written with / in place
+    # of \. json.dumps gives a valid TOML string for both, with the backslashes escaped.
+    header = f"[projects.{json.dumps(str(folder.resolve()))}]"
     if header not in text:
         user.write_text(f"{text.rstrip()}\n\n{header}\ntrust_level = \"trusted\"\n".lstrip("\n"), encoding="utf-8", newline="\n")
 
@@ -394,6 +397,45 @@ def check_local(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     return rows
 
 
+def plugin_version(profile: Path, plugin: str) -> str:
+    """The version in an installed plugin's manifest. Zotero updates plugins on its own, so it can differ from the pin."""
+    try:
+        xpi = profile / "extensions" / f"{plugin}.xpi"
+        if xpi.exists():
+            with zipfile.ZipFile(xpi) as package:
+                return str(json.loads(package.read("manifest.json")).get("version") or "")
+        unpacked = profile / "extensions" / plugin / "manifest.json"
+        if unpacked.exists():
+            return str(json.loads(unpacked.read_text(encoding="utf-8")).get("version") or "")
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        pass
+    return ""
+
+
+def cli_version() -> str:
+    """zotero-cli's version, as uv installed it."""
+    uv = shutil.which("uv")
+    if not uv:
+        return ""
+    try:
+        done = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    found = re.search(r"^zotero-mcp-server v(\S+)", done.stdout or "", re.M)
+    return found.group(1) if found else ""
+
+
+def check_cli(agent: str, cli: str) -> list[tuple[bool, str, str]]:
+    """The panel and zotero-cli come from one project and are released together. Zotero updates the panel by itself,
+    while zotero-cli stays where uv put it, so the two can drift apart, and the agent then gets commands the panel's
+    guidance does not describe."""
+    if not agent or not cli:
+        return []
+    if agent.split(".")[:2] == cli.split(".")[:2]:
+        return [(True, "zotero-cli", f"{cli}, matches Zotero Agent {agent}")]
+    return [(False, "zotero-cli", f"{cli}, but Zotero Agent is {agent}; run: uv tool install zotero-mcp-server=={agent}")]
+
+
 def check_zotero(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     profile = Path(config["profile"]) if config.get("profile") else None
     if not profile or not profile.exists():
@@ -403,7 +445,13 @@ def check_zotero(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     rows = [(major >= MIN_ZOTERO, "Zotero", f"{version or 'unknown'}, needs {MIN_ZOTERO} (back up the data folder before updating)")]
     for plugin, name in PLUGINS.items():
         present = (profile / "extensions" / f"{plugin}.xpi").exists() or (profile / "extensions" / plugin).exists()
-        rows.append((present, name, "installed" if present else "not installed"))
+        installed = plugin_version(profile, plugin)
+        rows.append((present, name, (f"installed {installed}" if installed else "installed") if present else "not installed"))
+        ours = json.loads((HERE / "plugin" / "manifest.json").read_text(encoding="utf-8"))["version"]
+        if plugin.startswith("reading-room-tools@") and installed and installed != ours:
+            # Zotero does not update this one by itself, so a pull leaves Zotero on the old build until it is installed.
+            rows.append((False, name, f"{installed} in Zotero, {ours} here; run plugins, install reading-room-tools.xpi again and restart Zotero"))
+    rows += check_cli(plugin_version(profile, "chat@zotero-mcp"), cli_version())
     bridge = (profile / BRIDGE).exists()
     rows.append((bridge, "Agent bridge", "downloaded" if bridge else "send one chat while online, because the first use downloads it"))
     return rows
@@ -710,7 +758,22 @@ def schedule(args: argparse.Namespace) -> int:
 
 
 AUTOLOAD_LABEL = "io.github.sidsharma2.reading-room-local"
-AUTOLOAD_TASK = "Reading Room local model"
+AUTOLOAD_NAME = "Reading Room local model"
+
+
+def startup_file() -> Path:
+    """Windows runs what is in this folder at each login of this user. A scheduled task with a logon trigger needs an
+    elevated prompt, because schtasks registers the trigger for any user, so a file here is used instead."""
+    appdata = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / f"{AUTOLOAD_NAME}.cmd"
+
+
+def startup_script(root: Path) -> str:
+    """start returns at once, so the console window closes, and pythonw runs local-ready with no window of its own."""
+    line = subprocess.list2cmdline(autoload_agent(root)["ProgramArguments"])
+    return ("@echo off\r\nchcp 65001 >nul\r\n"
+            "rem Reading Room: load the local model with enough context at login. reading_room.py autoload --remove deletes this file.\r\n"
+            f'start "" /min {line}\r\n')
 
 
 def lms_path() -> str | None:
@@ -773,12 +836,14 @@ def autoload(args: argparse.Namespace) -> int:
         print(f"the local model is loaded at each login; log at {root / 'local-model.log'}")
         return 0
     if sys.platform == "win32":
+        file = startup_file()
         if args.remove:
-            subprocess.run(["schtasks", "/Delete", "/F", "/TN", AUTOLOAD_TASK], check=True)
+            file.unlink(missing_ok=True)
+            print("the local model is no longer loaded at login")
             return 0
-        line = subprocess.list2cmdline(autoload_agent(root)["ProgramArguments"])
-        subprocess.run(["schtasks", "/Create", "/F", "/SC", "ONLOGON", "/TN", AUTOLOAD_TASK, "/TR", line], check=True)
-        print(f"the local model is loaded at each login by the task '{AUTOLOAD_TASK}'")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(startup_script(root), encoding="utf-8", newline="")
+        print(f"the local model is loaded at each login by {file}")
         return 0
     print("Run this at login: " + " ".join(autoload_agent(root)["ProgramArguments"]))
     return 0

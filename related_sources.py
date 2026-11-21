@@ -39,6 +39,7 @@ LIBRARY_RESULTS = 6  # with no wiki results; 3 when the wiki found something
 PLUGIN_FOLDER = "reading-room"
 CANDIDATES = 60
 READ_ONLY_CLI = {"search", "s", "read", "outline", "get", "g"}
+FETCHING_FLAGS = {"--positions", "--pdf-extraction"}  # these make a read-only command download files, so they ask
 TEXT_FILTERS = {"grep", "head", "tail", "cut", "wc"}
 NEIGHBOUR_RESULTS = 5
 STOPWORDS = set("""a about above after again all also am an and any are as at be because been before being below between both
@@ -413,7 +414,10 @@ def safe_segment(words: list[str], roots: list[str], cwd: str) -> bool:
         return len(words) == 2 and os.path.normcase(os.path.realpath(words[1])) == os.path.normcase(os.path.realpath(cwd))
     if tool == "zotero-cli":
         plain_words = [word for word in words[1:] if not word.startswith("-")]
-        return bool(plain_words) and (plain_words[0] in READ_ONLY_CLI or plain_words[:2] == ["annotations", "list"])
+        # zotero-cli 0.17: annotations list --positions may download the PDF, and --pdf-extraction a helper program.
+        if any(word.split("=")[0] in FETCHING_FLAGS for word in words[1:]):
+            return False
+        return bool(plain_words) and (plain_words[0] in READ_ONLY_CLI or (plain_words[:1] in (["annotations"], ["ann"]) and plain_words[1:2] == ["list"]))
     if tool == "sed":
         return len(words) == 4 and words[1] == "-n" and re.fullmatch(r"\d+(,\d+)?p", words[2]) is not None and inside(words[3], roots, cwd)
     if tool in TEXT_FILTERS:

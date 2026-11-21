@@ -224,24 +224,33 @@ def test_codex_may_reach_zotero_from_the_cloud_folders_only(home: Path) -> None:
     assert "network_access = true" in (root / "chat" / ".codex" / "config.toml").read_text(encoding="utf-8")
     assert not (root / "chat-local" / ".codex").exists()
     user = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
-    assert user.startswith('model = "m"') and user.count(f'[projects."{(root / "chat").resolve().as_posix()}"]') == 1
+    key = f"[projects.{json.dumps(str((root / 'chat').resolve()))}]"  # the native path, which is what Codex matches on Windows
+    assert user.startswith('model = "m"') and user.count(key) == 1
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
+def fake_claude(folder: Path, body: str) -> Path:
+    """A stand-in for claude that runs this Python body: a shell script on macOS and Linux, a .cmd file on Windows."""
+    script = folder / "fake_claude.py"
+    script.write_text(body, encoding="utf-8")
+    if sys.platform == "win32":
+        launcher = folder / "claude.cmd"
+        launcher.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+    else:
+        launcher = folder / "claude"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        launcher.chmod(0o755)
+    return launcher
+
+
 def test_claude_ai_connectors_are_read_from_the_first_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = tmp_path / "claude"
     init = {"type": "system", "subtype": "init", "tools": ["Read", "mcp__claude_ai_Gmail__send", "mcp__claude_ai_Gmail__read", "mcp__claude_ai_alphaXiv__find", "mcp__wiki__x"]}
-    fake.write_text(f"#!/bin/sh\necho 'not json'\necho '{json.dumps(init)}'\nsleep 30\n", encoding="utf-8")
-    fake.chmod(0o755)
+    fake = fake_claude(tmp_path, f"import time\nprint('not json', flush=True)\nprint({json.dumps(json.dumps(init))}, flush=True)\ntime.sleep(5)\n")
     monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
     assert kit.claude_ai_servers(tmp_path) == ["mcp__claude_ai_Gmail", "mcp__claude_ai_alphaXiv"]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="the fake claude is a shell script")
 def test_a_stalled_claude_cannot_hang_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = tmp_path / "claude"
-    fake.write_text("#!/bin/sh\nprintf '{\"type\": \"sys'\nsleep 30\n", encoding="utf-8")  # half a line, then nothing
-    fake.chmod(0o755)
+    fake = fake_claude(tmp_path, "import sys, time\nsys.stdout.write('{\"type\": \"sys')\nsys.stdout.flush()\ntime.sleep(5)\n")  # half a line, then nothing
     monkeypatch.setattr(kit.shutil, "which", lambda name: str(fake) if name == "claude" else None)
     start = kit.time.monotonic()
     assert kit.claude_ai_servers(tmp_path, seconds=1) == []
@@ -278,6 +287,24 @@ def test_local_ready_loads_only_when_the_context_is_short(home: Path, monkeypatc
 def test_the_autoload_job_runs_local_ready_at_login(tmp_path: Path) -> None:
     agent = kit.autoload_agent(tmp_path)
     assert agent["RunAtLoad"] and "StartInterval" not in agent and agent["ProgramArguments"][-1] == "local-ready"
+
+
+def test_windows_autoload_is_a_file_in_the_startup_folder(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A logon task needs an elevated prompt; the Startup folder does not, and removing the file undoes it."""
+    root = home / "ReadingRoom"
+    kit.setup(setup_args(root, "lmstudio", "gemma"))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setattr(kit.sys, "platform", "win32")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(kit.subprocess, "run", lambda words, **_: calls.append(words) or subprocess.CompletedProcess(words, 0, "", ""))
+    kit.autoload(argparse.Namespace(root=str(root), remove=False))
+    file = kit.startup_file()
+    text = file.read_text(encoding="utf-8")
+    assert file.parent.name == "Startup" and str(home) in str(file)
+    assert text.startswith("@echo off") and 'start "" /min' in text and text.rstrip().endswith("local-ready")
+    assert not calls, "no scheduled task, so nothing needs an elevated prompt"
+    kit.autoload(argparse.Namespace(root=str(root), remove=True))
+    assert not file.exists()
 
 
 def test_only_the_local_folder_trims_its_prompt(home: Path) -> None:
@@ -349,7 +376,7 @@ def test_a_plugin_with_the_wrong_hash_is_never_saved(tmp_path: Path, monkeypatch
 
 def test_the_pinned_plugins_are_the_audited_releases() -> None:
     assert {name: url.split("/download/")[1] for name, (url, _) in kit.THIRD_PARTY.items()} == {
-        "zotero-agent.xpi": "v0.15.2/zotero-agent.xpi", "zotero-annotation-markdown.xpi": "v0.16.4/zotero-annotation-markdown.xpi"}
+        "zotero-agent.xpi": "v0.17.3/zotero-agent.xpi", "zotero-annotation-markdown.xpi": "v0.16.4/zotero-annotation-markdown.xpi"}
 
 
 def test_the_papers_only_job_runs_the_swap_every_thirty_minutes(tmp_path: Path) -> None:
@@ -393,3 +420,24 @@ def test_setup_records_the_papers_folder(home: Path) -> None:
     args.papers_folder = str(home / "iCloud" / "Zotero PDFs")
     kit.setup(args)
     assert json.loads((root / "reading_room.json").read_text(encoding="utf-8"))["papers_folder"] == str(home / "iCloud" / "Zotero PDFs")
+
+
+def test_doctor_reads_each_plugins_installed_version(tmp_path: Path) -> None:
+    """Zotero updates plugins on its own, so doctor reports what is installed, not what was pinned."""
+    extensions = tmp_path / "extensions"
+    extensions.mkdir()
+    with kit.zipfile.ZipFile(extensions / "chat@zotero-mcp.xpi", "w") as package:
+        package.writestr("manifest.json", json.dumps({"name": "Zotero Agent", "version": "0.17.2"}))
+    (extensions / "unpacked@x").mkdir()
+    (extensions / "unpacked@x" / "manifest.json").write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    (extensions / "broken@x.xpi").write_bytes(b"not a zip")
+    assert kit.plugin_version(tmp_path, "chat@zotero-mcp") == "0.17.2"
+    assert kit.plugin_version(tmp_path, "unpacked@x") == "1.2.3"
+    assert kit.plugin_version(tmp_path, "broken@x") == "" and kit.plugin_version(tmp_path, "missing@x") == ""
+
+
+def test_doctor_flags_a_zotero_cli_that_no_longer_matches_the_panel() -> None:
+    assert kit.check_cli("0.17.3", "0.17.1")[0][0], "a patch apart is fine"
+    ok, name, text = kit.check_cli("0.17.2", "0.15.2")[0]
+    assert not ok and name == "zotero-cli" and "uv tool install zotero-mcp-server==0.17.2" in text
+    assert kit.check_cli("", "0.15.2") == [] and kit.check_cli("0.17.2", "") == []

@@ -170,6 +170,9 @@ def tool(name: str, path: str) -> bool:
     'zotero-cli --json read YRQ3DN7Y --find "NOx" | head -30',
     "zotero-cli get children YRQ3DN7Y; zotero-cli get metadata 3AST6754 | head -30",
     "zotero-cli annotations list --item-key YRQ3DN7Y",
+    "zotero-cli get metadata 3AST6754 --json",  # zotero-cli 0.17 takes --json after a nested command too
+    "zotero-cli ann list --item-key YRQ3DN7Y",  # ann is the short name for annotations
+    "zotero-cli read YRQ3DN7Y --start-page 1 --end-page 2",
     'grep -n -i -E "NOx|nitrogen" papers/W93S8H87-ciupek-2024.txt | cut -c1-300 | head -20',
     "sed -n 105,115p papers/W93S8H87-ciupek-2024.txt | cut -c1-900",
     f'cd "{CWD.replace(chr(92), "/")}"; grep -n NOx papers/x.txt',
@@ -184,6 +187,10 @@ def test_read_only_commands_need_no_card(command: str) -> None:
     "zotero-cli edit ABCD1234 --title x",
     "zotero-cli notes create x",
     "zotero-cli add 10.1/x",
+    "zotero-cli annotations list --item-key YRQ3DN7Y --positions",  # may download the PDF
+    "zotero-cli annotations list --item-key YRQ3DN7Y --pdf-extraction",  # may download a helper program
+    "zotero-cli config",  # can print settings that hold keys
+    "zotero-cli ann create --item-key YRQ3DN7Y",
     "zotero-cli read ABCD1234 > out.txt",
     "zotero-cli read ABCD1234; curl https://example.com",
     "zotero-cli read $(whoami)",
