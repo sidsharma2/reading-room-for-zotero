@@ -35,6 +35,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -59,12 +60,12 @@ PING = "Reply with exactly the single word: pong"
 LOCAL_DENY = ["Task", "Skill", "WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "CronCreate", "CronDelete", "CronList",
               "ScheduleWakeup", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode", "TaskOutput", "TaskStop",
               "ListMcpResourcesTool", "ReadMcpResourceTool", "AskUserQuestion", "Write", "Edit"]
-ZOTERO_CLI = "uv tool install zotero-mcp-server==0.15.2"
+ZOTERO_CLI = "uv tool install zotero-mcp-server==0.17.3"
 MIN_PYTHON = (3, 10)
 # The two plugins come from their authors' releases, pinned and hash checked. Both are AGPL, so they are not copied here.
 THIRD_PARTY = {
-    "zotero-agent.xpi": ("https://github.com/54yyyu/zotero-mcp/releases/download/v0.15.2/zotero-agent.xpi",
-                         "9a4ee266870252e7da61518b3b55351415d8b540a60471d7cef11ea79ee2b33c"),
+    "zotero-agent.xpi": ("https://github.com/54yyyu/zotero-mcp/releases/download/v0.17.3/zotero-agent.xpi",
+                         "8880007d96b7f21d99b4d99af249a0ebecd789919c011122fcbed2850241a038"),
     "zotero-annotation-markdown.xpi": ("https://github.com/qrkks/zotero-annotation-markdown/releases/download/v0.16.4/zotero-annotation-markdown.xpi",
                                        "39b5557a0b5854584d2535b1362d1703422138e8a713a8ea2673a828ce78f16c"),
 }
@@ -396,6 +397,45 @@ def check_local(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     return rows
 
 
+def plugin_version(profile: Path, plugin: str) -> str:
+    """The version in an installed plugin's manifest. Zotero updates plugins on its own, so it can differ from the pin."""
+    try:
+        xpi = profile / "extensions" / f"{plugin}.xpi"
+        if xpi.exists():
+            with zipfile.ZipFile(xpi) as package:
+                return str(json.loads(package.read("manifest.json")).get("version") or "")
+        unpacked = profile / "extensions" / plugin / "manifest.json"
+        if unpacked.exists():
+            return str(json.loads(unpacked.read_text(encoding="utf-8")).get("version") or "")
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        pass
+    return ""
+
+
+def cli_version() -> str:
+    """zotero-cli's version, as uv installed it."""
+    uv = shutil.which("uv")
+    if not uv:
+        return ""
+    try:
+        done = subprocess.run([uv, "tool", "list"], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    found = re.search(r"^zotero-mcp-server v(\S+)", done.stdout or "", re.M)
+    return found.group(1) if found else ""
+
+
+def check_cli(agent: str, cli: str) -> list[tuple[bool, str, str]]:
+    """The panel and zotero-cli come from one project and are released together. Zotero updates the panel by itself,
+    while zotero-cli stays where uv put it, so the two can drift apart, and the agent then gets commands the panel's
+    guidance does not describe."""
+    if not agent or not cli:
+        return []
+    if agent.split(".")[:2] == cli.split(".")[:2]:
+        return [(True, "zotero-cli", f"{cli}, matches Zotero Agent {agent}")]
+    return [(False, "zotero-cli", f"{cli}, but Zotero Agent is {agent}; run: uv tool install zotero-mcp-server=={agent}")]
+
+
 def check_zotero(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     profile = Path(config["profile"]) if config.get("profile") else None
     if not profile or not profile.exists():
@@ -405,7 +445,13 @@ def check_zotero(config: dict[str, Any]) -> list[tuple[bool, str, str]]:
     rows = [(major >= MIN_ZOTERO, "Zotero", f"{version or 'unknown'}, needs {MIN_ZOTERO} (back up the data folder before updating)")]
     for plugin, name in PLUGINS.items():
         present = (profile / "extensions" / f"{plugin}.xpi").exists() or (profile / "extensions" / plugin).exists()
-        rows.append((present, name, "installed" if present else "not installed"))
+        installed = plugin_version(profile, plugin)
+        rows.append((present, name, (f"installed {installed}" if installed else "installed") if present else "not installed"))
+        ours = json.loads((HERE / "plugin" / "manifest.json").read_text(encoding="utf-8"))["version"]
+        if plugin.startswith("reading-room-tools@") and installed and installed != ours:
+            # Zotero does not update this one by itself, so a pull leaves Zotero on the old build until it is installed.
+            rows.append((False, name, f"{installed} in Zotero, {ours} here; run plugins, install reading-room-tools.xpi again and restart Zotero"))
+    rows += check_cli(plugin_version(profile, "chat@zotero-mcp"), cli_version())
     bridge = (profile / BRIDGE).exists()
     rows.append((bridge, "Agent bridge", "downloaded" if bridge else "send one chat while online, because the first use downloads it"))
     return rows

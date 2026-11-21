@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.3.2](https://img.shields.io/badge/Reading_Room_Tools-0.3.2-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.3.3](https://img.shields.io/badge/Reading_Room_Tools-0.3.3-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -32,9 +32,9 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 
 | Part | What it does | Where it comes from |
 |---|---|---|
-| Zotero Agent 0.15.2 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
+| Zotero Agent 0.17.3 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.3.2 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.3.3 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |
@@ -73,7 +73,7 @@ You need Homebrew, and about 15 minutes.
 3. Install `zotero-cli`, which the agent uses to read your library:
 
    ```bash
-   uv tool install zotero-mcp-server==0.15.2
+   uv tool install zotero-mcp-server==0.17.3
    ```
 
 4. Get this repository:
@@ -152,7 +152,7 @@ Some things are different on a Mac:
 3. Install `zotero-cli`:
 
    ```powershell
-   uv tool install zotero-mcp-server==0.15.2
+   uv tool install zotero-mcp-server==0.17.3
    ```
 
 4. Clone this repository and go into it:
@@ -238,10 +238,12 @@ On a machine with no Claude sign-in, the panel will not send, even in `chat-loca
 
 Each step the agent takes asks for your OK, and one question took about ten approvals. You can pick "Yes, during this session" on a card. Or run `setup --auto-read`, and a hook approves only these:
 - reading the wiki and the paper's extracted text,
-- read-only `zotero-cli` lookups (`search`, `read`, `outline`, `get`, `annotations list`),
+- read-only `zotero-cli` lookups (`search`, `read`, `outline`, `get`, `annotations list`), but not `annotations list --positions` or `--pdf-extraction`, which can download files,
 - `grep`, `head`, `tail`, `cut`, `wc` and numbered `sed -n` on those files.
 
-Everything else still asks, including any write, any other file and any network command. It lets an agent skip a card, so it is off unless you ask for it. Run `setup` again without `--auto-read` to turn it off.
+Everything else still asks, including any write, any other file, any network command and `zotero-cli config`, which can print settings that hold keys. It lets an agent skip a card, so it is off unless you ask for it. Run `setup` again without `--auto-read` to turn it off.
+
+Use Claude Code or Codex in the panel. Zotero Agent also offers OpenCode and a custom agent, but neither runs Claude Code's hooks, so the source list and this approval hook do not apply to them, and OpenCode runs commands without asking unless its own settings say otherwise.
 
 ### Records
 
@@ -368,6 +370,8 @@ python3.12 reading_room.py plugins
 
 If the Reading Room Tools version in `plugin/manifest.json` went up, install `~/ReadingRoom/plugins/reading-room-tools.xpi` again from Tools > Plugins and restart Zotero, because until then a window such as the connections web can still run the old code. Then run `setup` again with the flags you used before.
 
+Zotero updates Zotero Agent and Annotation Markdown by itself while "Update Plugins Automatically" is on in Tools > Plugins. `zotero-cli` comes from the same project as Zotero Agent but stays at the version uv installed, so the two can drift apart. `doctor` shows each plugin's installed version and says when `zotero-cli` or Reading Room Tools needs updating.
+
 ## When something goes wrong
 
 - Run `doctor`. Each line starting with `FIX` says what to do.
@@ -421,4 +425,4 @@ Reading Room builds on other people's work:
 
 The code in this repository is under the MIT licence, in [`LICENSE`](LICENSE). Reading Room is an independent project. Zotero and the Corporation for Digital Scholarship do not make or endorse it.
 
-Zotero Agent and Annotation Markdown are AGPL-3.0 and belong to their authors. `plugins` downloads them from their own releases, and they are not copied here. MathLive 0.111.1 (MIT, by Arno Gourdol) goes into Reading Room Tools at build time with its licence file, and `build.py` checks it against its npm integrity hash. Connection data comes from OpenAlex, whose data is CC0.
+Zotero Agent and Annotation Markdown are AGPL-3.0 and belong to their authors. `plugins` downloads them from their own releases, and they are not copied here. MathLive 0.111.4 (MIT, by Arno Gourdol) goes into Reading Room Tools at build time with its licence file, and `build.py` checks it against its npm integrity hash. Connection data comes from OpenAlex, whose data is CC0.

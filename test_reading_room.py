@@ -376,7 +376,7 @@ def test_a_plugin_with_the_wrong_hash_is_never_saved(tmp_path: Path, monkeypatch
 
 def test_the_pinned_plugins_are_the_audited_releases() -> None:
     assert {name: url.split("/download/")[1] for name, (url, _) in kit.THIRD_PARTY.items()} == {
-        "zotero-agent.xpi": "v0.15.2/zotero-agent.xpi", "zotero-annotation-markdown.xpi": "v0.16.4/zotero-annotation-markdown.xpi"}
+        "zotero-agent.xpi": "v0.17.3/zotero-agent.xpi", "zotero-annotation-markdown.xpi": "v0.16.4/zotero-annotation-markdown.xpi"}
 
 
 def test_the_papers_only_job_runs_the_swap_every_thirty_minutes(tmp_path: Path) -> None:
@@ -420,3 +420,24 @@ def test_setup_records_the_papers_folder(home: Path) -> None:
     args.papers_folder = str(home / "iCloud" / "Zotero PDFs")
     kit.setup(args)
     assert json.loads((root / "reading_room.json").read_text(encoding="utf-8"))["papers_folder"] == str(home / "iCloud" / "Zotero PDFs")
+
+
+def test_doctor_reads_each_plugins_installed_version(tmp_path: Path) -> None:
+    """Zotero updates plugins on its own, so doctor reports what is installed, not what was pinned."""
+    extensions = tmp_path / "extensions"
+    extensions.mkdir()
+    with kit.zipfile.ZipFile(extensions / "chat@zotero-mcp.xpi", "w") as package:
+        package.writestr("manifest.json", json.dumps({"name": "Zotero Agent", "version": "0.17.2"}))
+    (extensions / "unpacked@x").mkdir()
+    (extensions / "unpacked@x" / "manifest.json").write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    (extensions / "broken@x.xpi").write_bytes(b"not a zip")
+    assert kit.plugin_version(tmp_path, "chat@zotero-mcp") == "0.17.2"
+    assert kit.plugin_version(tmp_path, "unpacked@x") == "1.2.3"
+    assert kit.plugin_version(tmp_path, "broken@x") == "" and kit.plugin_version(tmp_path, "missing@x") == ""
+
+
+def test_doctor_flags_a_zotero_cli_that_no_longer_matches_the_panel() -> None:
+    assert kit.check_cli("0.17.3", "0.17.1")[0][0], "a patch apart is fine"
+    ok, name, text = kit.check_cli("0.17.2", "0.15.2")[0]
+    assert not ok and name == "zotero-cli" and "uv tool install zotero-mcp-server==0.17.2" in text
+    assert kit.check_cli("", "0.15.2") == [] and kit.check_cli("0.17.2", "") == []
