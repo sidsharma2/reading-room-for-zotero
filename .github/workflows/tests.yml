@@ -28,7 +28,7 @@ jobs:
           python -m pip install --quiet pytest
           python -m pytest -q
       - name: Plugin tests
-        run: node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs
+        run: node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs plugin/test_attach.mjs
       - name: Build Reading Room Tools
         shell: bash
         run: |

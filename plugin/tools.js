@@ -3,7 +3,7 @@
  * The equation editor writes plain LaTeX with dollar signs, because that is what Annotation Markdown renders and what
  * the agent reads. So nothing here depends on the editor: the text stays readable and exportable without this plugin.
  */
-/* global Zotero, Services, PathUtils, IOUtils, ChromeUtils, RRConnections, RROrganise */
+/* global Zotero, Services, PathUtils, IOUtils, ChromeUtils, RRConnections, RROrganise, RRAttach */
 var RRTools = {
   id: "",
   rootURI: "",
@@ -19,6 +19,9 @@ var RRTools = {
     }
     if (typeof RROrganise !== "undefined") {
       Zotero.RROrganise = RROrganise;
+    }
+    if (typeof RRAttach !== "undefined") {
+      Zotero.RRAttach = RRAttach;
     }
     this.listen("renderToolbar", (event) => this.renderToolbar(event));
     this.listen("renderSidebarAnnotationHeader", (event) => this.renderAnnotationHeader(event));
@@ -45,6 +48,7 @@ var RRTools = {
     delete Zotero.RRTools;
     delete Zotero.RRConnections;
     delete Zotero.RROrganise;
+    delete Zotero.RRAttach;
   },
 
   listen(type, handler) {
@@ -109,8 +113,9 @@ var RRTools = {
     win.clearTimeout(state.warmFirst);
     win.clearInterval(state.warmTimer);
     const root = this.panelRoot(win);
-    root?.querySelector(".rr-eq")?.remove();
+    root?.querySelectorAll(".rr-eq, .rr-attach").forEach((button) => button.remove());
     root?.removeEventListener("click", this.onPanelClick, true);
+    state.unwatch?.();
     this.windows.delete(win);
   },
 
@@ -168,8 +173,13 @@ var RRTools = {
     const box = root?.querySelector("textarea.cin");
     if (root) {
       root.addEventListener("click", this.onPanelClick, true); // adding the same listener twice does nothing
+      this.watchFiles(win, root.host);
     }
-    if (!box || root.querySelector(".rr-eq")) {
+    if (!box) {
+      return;
+    }
+    this.addAttachButton(win, root, box);
+    if (root.querySelector(".rr-eq")) {
       return;
     }
     const button = this.button(win.document, "Σ", "Insert equation", () => this.openEditor(win, { kind: "text", element: box }));
@@ -179,6 +189,44 @@ var RRTools = {
     if (win.getComputedStyle(box.parentElement).position === "static") {
       box.parentElement.style.position = "relative";
     }
+    box.parentElement.appendChild(button);
+  },
+
+  /** Files dropped or pasted anywhere on the chat. The panel can be replaced while Zotero runs, by its own update. */
+  watchFiles(win, host) {
+    const state = this.windows.get(win);
+    if (typeof RRAttach === "undefined" || !state || state.watched === host) {
+      return;
+    }
+    state.unwatch?.();
+    state.unwatch = RRAttach.watch(host, win);
+    state.watched = host;
+  },
+
+  /** A paperclip beside the panel's + button, or beside the box if that row is not there. */
+  addAttachButton(win, root, box) {
+    if (typeof RRAttach === "undefined" || root.querySelector(".rr-attach")) {
+      return;
+    }
+    const button = this.button(win.document, "", "Attach pictures or documents", () => RRAttach.pick(win));
+    const plus = root.querySelector(".composer .ctools > .iconbtn");
+    const svg = win.document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const path = win.document.createElementNS("http://www.w3.org/2000/svg", "path");
+    for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" })) {
+      svg.setAttribute(name, value);
+    }
+    path.setAttribute("d", "M21 11.5l-8.6 8.6a5.6 5.6 0 0 1-8-8l8.7-8.6a3.8 3.8 0 0 1 5.3 5.3l-8.6 8.6a1.9 1.9 0 0 1-2.7-2.7l8-7.9");
+    svg.appendChild(path);
+    button.appendChild(svg);
+    button.type = "button";
+    if (plus) {
+      button.className = "rr-attach iconbtn iconbtn--sm";
+      plus.after(button);
+      return;
+    }
+    button.className = "rr-attach";
+    button.style.cssText = "position:absolute;right:36px;top:6px;z-index:5;width:24px;height:24px;padding:0;border:1px solid var(--line,#8886);"
+      + "border-radius:6px;background:transparent;color:inherit;cursor:pointer;opacity:.75";
     box.parentElement.appendChild(button);
   },
 

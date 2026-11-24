@@ -14,6 +14,7 @@ async function startup({ id, rootURI }) {
   resources().setSubstitution("rrtools", Services.io.newURI(rootURI + "content/"));
   Services.scriptloader.loadSubScript(rootURI + "connections.js");
   Services.scriptloader.loadSubScript(rootURI + "organise.js");
+  Services.scriptloader.loadSubScript(rootURI + "attach.js");
   Services.scriptloader.loadSubScript(rootURI + "tools.js");
   RRTools.start(id, rootURI);
 }

@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.3.3](https://img.shields.io/badge/Reading_Room_Tools-0.3.3-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.4.0](https://img.shields.io/badge/Reading_Room_Tools-0.4.0-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -21,6 +21,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 ## Features
 
 - Chat beside the PDF. Select text or crop a figure, ask, and the answer comes back with rendered equations. Before each question, a hook finds the papers in your library, and the wiki pages if you keep a wiki, that match the question best, and hands the list to the agent.
+- Pictures and documents in the chat. Drag them onto the panel, paste them, or use the paperclip. The agent reads a PDF, Word or PowerPoint file from a plain-text copy, and the file does not have to be in your library.
 - An equation editor with a symbol keyboard and a LaTeX box that stay in step. It inserts `$...$` into an annotation comment or the chat box.
 - Markdown and LaTeX in annotation comments, and Save notes, which puts the paper's annotations and your questions and answers into a Zotero note.
 - A connections web of earlier work, later work and similar papers from OpenAlex, with what you already hold marked. Map my library shows how your own papers cite each other.
@@ -34,7 +35,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 |---|---|---|
 | Zotero Agent 0.17.3 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.3.3 | The equation editor, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.4.0 | The equation editor, attached pictures and documents, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |
@@ -171,6 +172,14 @@ Some things are different on a Mac:
 
 **Ask about a paper.** Open the PDF and use the Zotero Agent panel on the right. Select text or crop a figure first, and it goes in with the question. The answer can use LaTeX, and the panel renders it.
 
+**Attach files.** Drag files onto the chat, paste them into the message box, or press the paperclip next to the + button. PNG, JPEG, GIF and WebP pictures become tiles above your message. A document is copied into `uploads/` in the chat's folder, and a line such as `Attached: uploads/Draft.pdf (15 pages, text in Draft.pdf.txt)` goes below your question. Delete the line to leave that file out.
+
+![A question about an attached PDF: the line under the question names the file, and the agent reads the text copy.](docs/images/attach.png)
+
+For a PDF, Word or PowerPoint file, Reading Room Tools writes the text to the `.txt` beside it, with `[p.N]` where page N of a PDF starts. A scan has no text layer, so the agent has to open the PDF itself. Excel, CSV, Markdown, LaTeX, BibTeX and code files go in as they are. You can attach up to 10 documents at a time, of up to 100 MB each. Nothing in `uploads/` is deleted for you, so clear it out when you like. Your own file is never moved or changed.
+
+The file does not have to be in your library. For example, attach a draft and ask for a collection of the papers it cites. Before the chat can change your library, Zotero has to allow it once: run `zotero-mcp authorize-local` and answer Always Allow in Zotero. Each change still shows an approval card.
+
 **Write an equation.** Press Σ, or Ctrl+Shift+M (Cmd+Shift+M on a Mac). Σ is on the reader toolbar, on each annotation and next to the chat box. The editor has a symbol keyboard, and the LaTeX source sits under the preview, so you can type in either one. Insert puts `$...$` at the cursor. From the toolbar with a comment open, it goes at the end of that comment.
 
 ![The equation editor: a visual field, a symbol keyboard and the LaTeX source.](docs/images/equation-editor.png)
@@ -237,7 +246,7 @@ On a machine with no Claude sign-in, the panel will not send, even in `chat-loca
 ### Approvals
 
 Each step the agent takes asks for your OK, and one question took about ten approvals. You can pick "Yes, during this session" on a card. Or run `setup --auto-read`, and a hook approves only these:
-- reading the wiki and the paper's extracted text,
+- reading the wiki, the paper's extracted text and the files you attached,
 - read-only `zotero-cli` lookups (`search`, `read`, `outline`, `get`, `annotations list`), but not `annotations list --positions` or `--pdf-extraction`, which can download files,
 - `grep`, `head`, `tail`, `cut`, `wc` and numbered `sed -n` on those files.
 
@@ -353,7 +362,7 @@ A search that fails, for example because OpenAlex's free daily allowance is spen
 
 ## What leaves your machine
 
-- Your questions, the selected text, cropped figures and the pages the agent reads go to the model you chose: your Claude or ChatGPT account, or the local model, which keeps them on the machine.
+- Your questions, the selected text, cropped figures, attached pictures, and what the agent reads of papers and attached files go to the model you chose: your Claude or ChatGPT account, or the local model, which keeps them on the machine.
 - The connections web sends OpenAlex the DOI of each paper you open, or its title when it has no DOI. Map my library sends the DOIs of all your papers. While Zotero is open and online, the warm-up sends those of up to 25 library papers every six hours, until it is turned off. `papers.py dois` sends titles to Crossref, OpenAlex and DataCite. None of these needs an account.
 - Records stay in `~/ReadingRoom/capture` unless you set `--capture-remote`. PDFs go only to the folder you give `--papers-folder`.
 - Nothing is sent to the author of this repository.
@@ -384,6 +393,7 @@ Zotero updates Zotero Agent and Annotation Markdown by itself while "Update Plug
 
 - LM Studio with Gemma 4 E4B was tried on a Mac from the command line in `chat-local`, but not yet through the panel.
 - Wiki pages in the source list need a copy of the wiki on the machine (`--vault`).
+- Attaching files was tried by hand on Windows with the paperclip. Dragging and pasting were tested in Zotero with simulated events, and none of it has been tried on a Mac yet. The text copy of a PDF uses a call inside Zotero that a later release could change. If it fails, the PDF is still attached, without the copy.
 - The connections web knows only what OpenAlex knows. A paper with no DOI is placed only by an exact title, and OpenAlex has no abstract for many publishers' papers.
 - Same words, in your library is a word match on titles, abstracts and tags. It finds papers on the same topic but can miss one that uses other words.
 - The source list for Codex is written but not tested. Codex has no hook, so its `AGENTS.md` tells it to run the search itself.
@@ -399,16 +409,16 @@ Zotero updates Zotero Agent and Annotation Markdown by itself while "Update Plug
 | `papers.py` | PDFs on every machine (`status`, `share`, `fetch`, `swap`, `find`), the library report (`tidy`) and missing DOIs (`dois`) |
 | `qa_capture.py` | Records: `capture`, `verify`, `import` |
 | `research_annotation.md` | The record template |
-| `plugin/` | Reading Room Tools source. `connections.js` fetches and builds the web, `content/web.*` draws it, `organise.js` applies plans and merges, and `build.py` makes the same `.xpi` on every machine |
+| `plugin/` | Reading Room Tools source. `connections.js` fetches and builds the web, `content/web.*` draws it, `organise.js` applies plans and merges, `attach.js` puts files in the chat, and `build.py` makes the same `.xpi` on every machine |
 | `examples/` | One CSV for each library step |
 | `docs/images/` | The screenshots in this file |
 | `.github/workflows/tests.yml` | Runs the tests on macOS and Windows for every change, and builds the plugin on both |
 | `LICENSE` | The MIT licence |
-| `test_*.py`, `plugin/test_*.mjs` | Tests: `python3.12 -m pytest` and `node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs` |
+| `test_*.py`, `plugin/test_*.mjs` | Tests: `python3.12 -m pytest` and `node --test plugin/test_tools.mjs plugin/test_connections.mjs plugin/test_organise.mjs plugin/test_attach.mjs` |
 
 ## Screenshots
 
-The screenshots come from a separate demo library of open-access papers published under Creative Commons Attribution licences, including Riemer and West (2013), Atmos. Chem. Phys. 13, 11423-11439, CC BY 3.0, whose first page is shown, and Corbin et al. (2022), Atmos. Meas. Tech. 15, 3223-3242, CC BY 4.0. The highlights, comments and the question are examples written for the demo.
+The screenshots come from a separate demo library of open-access papers published under Creative Commons Attribution licences, including Riemer and West (2013), Atmos. Chem. Phys. 13, 11423-11439, CC BY 3.0, whose first page is shown, and Corbin et al. (2022), Atmos. Meas. Tech. 15, 3223-3242, CC BY 4.0. The highlights, comments, questions and the attached paper are examples written for the demo.
 
 ## Credits
 

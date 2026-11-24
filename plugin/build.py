@@ -17,7 +17,7 @@ MATHLIVE_URL = f"https://registry.npmjs.org/mathlive/-/mathlive-{MATHLIVE_VERSIO
 MATHLIVE_SHA512 = "1E5EOQnUHWn+KfEXaDTmuyxRWZrZw4WlQFyZLzJmjKEPdaX4WAnFqVfZb36mhulykcIl7/W7gKkTmutP2/9wjQ=="
 CACHE = HERE / ".cache" / f"mathlive-{MATHLIVE_VERSION}.tgz"
 OUTPUT = HERE / "reading-room-tools.xpi"
-OURS = ["manifest.json", "bootstrap.js", "connections.js", "organise.js", "tools.js", "content/web.xhtml", "content/web-host.js", "content/web.html", "content/web.css", "content/web.js", "content/host.xhtml", "content/host.js", "content/equation.html", "content/equation.js", "content/equation.css"]
+OURS = ["manifest.json", "bootstrap.js", "connections.js", "organise.js", "attach.js", "tools.js", "content/web.xhtml", "content/web-host.js", "content/web.html", "content/web.css", "content/web.js", "content/host.xhtml", "content/host.js", "content/equation.html", "content/equation.js", "content/equation.css"]
 
 
 def mathlive_archive() -> bytes:
