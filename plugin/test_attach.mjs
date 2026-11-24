@@ -98,6 +98,20 @@ test("a name that starts like another is a different file", () => {
   assert.equal(attach.lineAt("x\nAttached: uploads/b.pdf", "Attached: uploads/b.pdf"), 2);
 });
 
+test("the tiles show the files that the box names, and only those", () => {
+  const value = "What is this?\n\nAttached: uploads/a.pdf (15 pages, text in a.pdf.txt)\nAttached: uploads/b.csv\nsee Attached: uploads/c.pdf\nAttached: uploads/../d.pdf";
+  assert.deepEqual([...attach.filesIn(value)].map((file) => `${file.name}|${file.pages}`), ["a.pdf|15 pages", "b.csv|"]);
+  assert.deepEqual([...attach.filesIn("")], []);
+});
+
+test("leaving a file out takes its line and nothing else", () => {
+  const value = "What is this?\n\nAttached: uploads/a.json\nAttached: uploads/a.js (1 page)";
+  assert.equal(attach.withoutFile(value, "a.js"), "What is this?\n\nAttached: uploads/a.json");
+  assert.equal(attach.withoutFile(attach.withoutFile(value, "a.js"), "a.json"), "What is this?");
+  assert.equal(attach.withoutFile("\n\nAttached: uploads/a.pdf", "a.pdf"), "");
+  assert.equal(attach.withoutFile(value, "missing.pdf"), value);
+});
+
 test("a drag that starts in Zotero stays the panel's own", () => {
   const files = [{ name: "a.pdf" }];
   assert.equal(attach.filesOf({ types: ["Files"], files }).length, 1);
@@ -126,6 +140,8 @@ test("a drop on the message box leaves its pictures to the panel, and a drop els
   own.take = (win, files, options) => calls.push([files.map((file) => file.name), options.pictures]);
   const shown = [];
   own.showDrop = (win, on) => shown.push(on);
+  let copies = 0;
+  own.asCopy = () => copies++;
   const target = host();
   const stop = own.watch(target, {});
   const data = { types: ["Files"], files: [{ name: "a.png" }, { name: "b.pdf" }] };
@@ -135,6 +151,7 @@ test("a drop on the message box leaves its pictures to the panel, and a drop els
   target.handlers.drop(onFeed);
   assert.deepEqual(calls.map(([names, pictures]) => [names.join(), pictures]), [["a.png,b.pdf", false], ["a.png,b.pdf", true]]);
   assert.ok(onBox.prevented && onFeed.prevented);
+  assert.equal(copies, 2, "the source must not be told that its file was moved");
   shown.length = 0;
   const over = event({ types: ["Files"], files: [] }); // while dragging, the files themselves are not listed
   target.handlers.dragover(over);
@@ -173,11 +190,12 @@ test("what cannot be attached is refused with a reason, and the rest still goes 
   own.copyIn = async (file) => file.name;
   own.writeText = async () => ({});
   own.setBox = () => {};
+  own.tiles = () => {};
   own.chatFolder = () => "/rr";
   Object.assign(own, { box: () => ({ value: "" }) });
   const context = { PathUtils: { join: (...parts) => parts.join("/") }, IOUtils: { makeDirectory: async () => {} } };
   const withFiles = load({ ...context, RRTools: { notify: (win, title, body) => notes.push(body) }, Zotero: { debug() {} } });
-  Object.assign(withFiles, { copyIn: own.copyIn, writeText: own.writeText, setBox: own.setBox, chatFolder: own.chatFolder, box: own.box });
+  Object.assign(withFiles, { copyIn: own.copyIn, writeText: own.writeText, setBox: own.setBox, tiles: own.tiles, flash: own.tiles, chatFolder: own.chatFolder, box: own.box });
   const files = [{ name: "a.pdf", size: 10 }, { name: "run.exe", size: 10 }, { name: "big.pdf", size: 200 * 1024 * 1024 }];
   const done = await withFiles.take({}, files, { pictures: false });
   assert.deepEqual([...done.attached].map((each) => each.name), ["a.pdf"]);

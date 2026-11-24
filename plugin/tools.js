@@ -113,7 +113,7 @@ var RRTools = {
     win.clearTimeout(state.warmFirst);
     win.clearInterval(state.warmTimer);
     const root = this.panelRoot(win);
-    root?.querySelectorAll(".rr-eq, .rr-attach").forEach((button) => button.remove());
+    root?.querySelectorAll(".rr-eq, .rr-attach, .rr-files").forEach((element) => element.remove());
     root?.removeEventListener("click", this.onPanelClick, true);
     state.unwatch?.();
     this.windows.delete(win);
@@ -179,6 +179,9 @@ var RRTools = {
       return;
     }
     this.addAttachButton(win, root, box);
+    if (typeof RRAttach !== "undefined") {
+      RRAttach.tiles(win); // sending clears the box without an event
+    }
     if (root.querySelector(".rr-eq")) {
       return;
     }
@@ -210,14 +213,7 @@ var RRTools = {
     }
     const button = this.button(win.document, "", "Attach pictures or documents", () => RRAttach.pick(win));
     const plus = root.querySelector(".composer .ctools > .iconbtn");
-    const svg = win.document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    const path = win.document.createElementNS("http://www.w3.org/2000/svg", "path");
-    for (const [name, value] of Object.entries({ viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" })) {
-      svg.setAttribute(name, value);
-    }
-    path.setAttribute("d", "M21 11.5l-8.6 8.6a5.6 5.6 0 0 1-8-8l8.7-8.6a3.8 3.8 0 0 1 5.3 5.3l-8.6 8.6a1.9 1.9 0 0 1-2.7-2.7l8-7.9");
-    svg.appendChild(path);
-    button.appendChild(svg);
+    button.appendChild(RRAttach.icon(win.document, "clip"));
     button.type = "button";
     if (plus) {
       button.className = "rr-attach iconbtn iconbtn--sm";

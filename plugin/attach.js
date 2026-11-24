@@ -3,7 +3,8 @@
  * Zotero Agent already turns a pasted or dropped picture into a picture chip, and ignores every other file. So pictures
  * are handed to it, and documents are handled here: each is copied into uploads/ in the folder the chat runs in, with a
  * plain-text copy beside it, and one line in the message box names it. The agent reads it from there like any other
- * file, so this needs nothing from inside Zotero Agent but its message box.
+ * file, so this needs nothing from inside Zotero Agent but its message box. The lines are what is sent; the tiles above
+ * the box only show them.
  */
 /* global Zotero, Services, Components, ChromeUtils, PathUtils, IOUtils, RRTools */
 var RRAttach = {
@@ -15,6 +16,12 @@ var RRAttach = {
   MAX_BYTES: 100 * 1024 * 1024,
   MAX_ENTRY: 50 * 1024 * 1024, // one part of a Word or PowerPoint file, unpacked
   FOLDER: "uploads",
+  ICONS: {
+    clip: "M21 11.5l-8.6 8.6a5.6 5.6 0 0 1-8-8l8.7-8.6a3.8 3.8 0 0 1 5.3 5.3l-8.6 8.6a1.9 1.9 0 0 1-2.7-2.7l8-7.9",
+    file: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5",
+    close: "M6 6l12 12M18 6L6 18",
+  },
+  pending: new WeakMap(), // window -> names being copied
 
   // ---- plain functions, tested in test_attach.mjs ----
 
@@ -116,6 +123,18 @@ var RRAttach = {
     return -1;
   },
 
+  /** The files named in the box, for the tiles. */
+  filesIn(value) {
+    return value.split("\n").map((line) => /^Attached: uploads\/([A-Za-z0-9][A-Za-z0-9._-]*)(?: \((.*)\))?$/.exec(line)).filter(Boolean)
+      .map((match) => ({ name: match[1], pages: /^\d+ pages?/.exec(match[2] ?? "")?.[0] ?? "" }));
+  },
+
+  withoutFile(value, name) {
+    const bare = this.line(name);
+    const kept = value.split("\n").filter((line) => line !== bare && !line.startsWith(`${bare} (`)).join("\n");
+    return kept.trim() ? kept.replace(/\s+$/, "") : "";
+  },
+
   /** A drag that starts in Zotero can carry files as well as items, and it stays the panel's own. */
   carriesFiles(data) {
     const types = [...(data?.types ?? [])];
@@ -161,6 +180,7 @@ var RRAttach = {
       this.showDrop(win, false);
       if (files.length) {
         event.preventDefault();
+        this.asCopy(win);
         // On the message box itself the panel takes the pictures, so only documents are handled here.
         const onBox = event.composedPath().some((element) => element.classList?.contains("composer"));
         this.take(win, files, { pictures: !onBox });
@@ -173,9 +193,25 @@ var RRAttach = {
         this.take(win, files, { pictures: false });
       }
     };
-    const listeners = [["dragenter", copy], ["dragover", copy], ["dragleave", leave], ["drop", drop], ["paste", paste]];
+    // Typing, removing a line, sending and clearing all change which files are named.
+    const refresh = () => win.setTimeout(() => this.tiles(win), 60);
+    const listeners = [["dragenter", copy], ["dragover", copy], ["dragleave", leave], ["drop", drop], ["paste", paste], ["input", refresh], ["keyup", refresh], ["click", refresh]];
     listeners.forEach(([type, handler]) => host.addEventListener(type, handler, true));
     return () => listeners.forEach(([type, handler]) => host.removeEventListener(type, handler, true));
+  },
+
+  /** Gecko otherwise answers "moved", and the program the file came from could take that as leave to delete its own. */
+  asCopy(win) {
+    try {
+      const { classes: Cc, interfaces: Ci } = Components;
+      const session = Cc["@mozilla.org/widget/dragservice;1"].getService(Ci.nsIDragService).getCurrentSession(win);
+      if (session) {
+        session.dragAction = Ci.nsIDragService.DRAGDROP_ACTION_COPY;
+      }
+    }
+    catch (error) {
+      Zotero.debug(`Reading Room Tools: drop not marked as a copy: ${error}`);
+    }
   },
 
   /** The panel's own drop sign on the message box, shown for the whole panel. */
@@ -256,13 +292,23 @@ var RRAttach = {
       throw new Error(`larger than ${Math.round(this.MAX_BYTES / 1024 / 1024)} MB`);
     }
     const folder = PathUtils.join(this.chatFolder(), this.FOLDER);
-    await IOUtils.makeDirectory(folder, { createAncestors: true, ignoreExisting: true });
-    const name = await this.copyIn(file, folder);
+    const shown = this.safeName(file.name);
+    this.setPending(win, shown, true);
+    let name = "";
+    try {
+      await IOUtils.makeDirectory(folder, { createAncestors: true, ignoreExisting: true });
+      name = await this.copyIn(file, folder);
+    }
+    finally {
+      this.setPending(win, shown, false);
+    }
     const box = this.box(win);
     let line = this.line(name);
     if (box && !this.hasFile(box.value, name)) {
       this.setBox(win, box, this.withLine(box.value, line));
     }
+    this.tiles(win);
+    this.flash(win, name); // the only sign when the file was already there
     // The copy is in place, so a question sent now already works. The line gets its details when the text is ready.
     const facts = await this.writeText(PathUtils.join(folder, name));
     const full = this.line(name, facts);
@@ -271,6 +317,7 @@ var RRAttach = {
       if (at >= 0) {
         box.setRangeText(full, at, at + line.length, "preserve");
         box.dispatchEvent(new win.Event("input", { bubbles: true }));
+        this.tiles(win);
       }
       line = full;
     }
@@ -283,6 +330,100 @@ var RRAttach = {
     box.dispatchEvent(new win.Event("input", { bubbles: true }));
     box.focus();
     box.setSelectionRange(caret, caret);
+  },
+
+  // ---- the tiles ----
+
+  icon(doc, name) {
+    const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+    const look = { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor", "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round" };
+    for (const [key, value] of Object.entries(look)) {
+      svg.setAttribute(key, value);
+    }
+    path.setAttribute("d", this.ICONS[name]);
+    svg.appendChild(path);
+    return svg;
+  },
+
+  setPending(win, name, on) {
+    const names = this.pending.get(win) ?? new Set();
+    this.pending.set(win, names);
+    names[on ? "add" : "delete"](name);
+    this.tiles(win);
+  },
+
+  /** One tile for each file named in the box, in the panel's own chip style. */
+  tiles(win) {
+    const box = this.box(win);
+    if (!box) {
+      return;
+    }
+    const files = this.filesIn(box.value);
+    const busy = [...(this.pending.get(win) ?? [])].filter((name) => !files.some((file) => file.name === name)).map((name) => ({ name, busy: true }));
+    const all = [...files, ...busy];
+    const key = JSON.stringify(all);
+    let row = box.parentElement.querySelector(".rr-files");
+    if (!all.length) {
+      row?.remove();
+      return;
+    }
+    if (!row) {
+      row = win.document.createElement("div");
+      row.className = "cchips rr-files";
+      box.before(row);
+    }
+    if (row.dataset.shown !== key) {
+      row.dataset.shown = key;
+      row.replaceChildren(...all.map((file) => this.tile(win, file)));
+    }
+  },
+
+  tile(win, { name, pages = "", busy = false }) {
+    const doc = win.document;
+    const make = (tag, className, ...children) => {
+      const element = doc.createElement(tag);
+      element.className = className;
+      element.append(...children);
+      return element;
+    };
+    const press = (element, title, action) => {
+      element.type = "button";
+      element.title = title;
+      element.setAttribute("aria-label", title);
+      element.addEventListener("click", action);
+      return element;
+    };
+    const label = busy ? `${name} · attaching…` : pages ? `${name} · ${pages}` : name;
+    const main = make("button", "chip__main", make("span", "chip__i", this.icon(doc, "file")), make("span", "chip__t", label));
+    const tile = make("div", "chip rr-file", main);
+    tile.dataset.name = name;
+    if (!busy) {
+      // Shown in its folder, never opened: some of the kinds that can be attached are scripts.
+      press(main, `Show ${name} in its folder`, () => Zotero.File.reveal(PathUtils.join(this.chatFolder(), this.FOLDER, name)));
+      tile.append(press(make("button", "chip__btn chip__x", this.icon(doc, "close")), `Leave ${name} out`, () => this.remove(win, name)));
+    }
+    return tile;
+  },
+
+  /** Takes the file out of this message. The copy stays in uploads/. */
+  remove(win, name) {
+    const box = this.box(win);
+    if (box) {
+      const value = this.withoutFile(box.value, name);
+      const caret = Math.min(box.selectionEnd, value.length);
+      box.value = value;
+      box.dispatchEvent(new win.Event("input", { bubbles: true }));
+      box.focus();
+      box.setSelectionRange(caret, caret);
+      this.tiles(win);
+    }
+  },
+
+  flash(win, name) {
+    const row = this.box(win)?.parentElement.querySelector(".rr-files");
+    const tile = [...(row?.children ?? [])].find((each) => each.dataset.name === name);
+    tile?.animate([{ backgroundColor: "color-mix(in srgb, currentColor 30%, transparent)" }, { backgroundColor: "transparent" }], { duration: 1200 });
   },
 
   /** Copies the file under a safe name. The same file again keeps its copy, and another file of that name gets a number. */

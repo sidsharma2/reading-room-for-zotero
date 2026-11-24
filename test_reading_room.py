@@ -196,8 +196,9 @@ def test_both_folders_get_the_source_hook_and_only_local_stays_offline(home: Pat
     assert "Bash" in cloud["hooks"]["PreToolUse"][0]["matcher"] and "permissions" not in cloud
     assert "wiki-copy" in (root / "chat" / "CLAUDE.md").read_text(encoding="utf-8")
     for folder in ("chat", "chat-local"):  # every agent is told where attached files are
-        assert kit.ATTACH_GUIDE in (root / folder / "CLAUDE.md").read_text(encoding="utf-8")
-        assert kit.ATTACH_GUIDE in (root / folder / "AGENTS.md").read_text(encoding="utf-8")
+        for guide in (kit.ATTACH_GUIDE, kit.FOLDER_GUIDE):
+            assert guide in (root / folder / "CLAUDE.md").read_text(encoding="utf-8")
+            assert guide in (root / folder / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_codex_guide_keeps_the_panels_block(home: Path) -> None:
