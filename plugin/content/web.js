@@ -20,15 +20,22 @@ const GROUPS = {
     ["later", "Later work that cites several of yours", ""],
     ["expanded", "From expanding", "added when you expanded a paper"],
   ],
+  collection: [
+    ["mine", "Papers in this collection", "in this collection"],
+    ["earlier", "Earlier work several of these cite", ""],
+    ["later", "Later work that cites several of these", ""],
+    ["expanded", "From expanding", "added when you expanded a paper"],
+  ],
   later: [
     ["saved", "Saved to check later", "you saved it to check later"],
   ],
 };
+const MAPS = ["library", "collection"];
 // Where each group gathers: earlier work on the left, later work on the right, as on a timeline.
 const ANCHORS = { focal: [0, 0], references: [-480, 0], citing: [480, 0], related: [0, 340], library: [0, -320], mine: [0, 0], earlier: [-560, 0], later: [560, 0], expanded: [0, 440], saved: [0, 0] };
 const MARKS = { have: "In your library, with a PDF", wanted: "In your library, no PDF here", new: "Not in your library" };
 
-const state = { web: null, byId: new Map(), selected: "", shown: new Set(), history: [], next: "replace", view: { x: 0, y: 0, k: 1 }, abstracts: new Map(), lonely: false };
+const state = { web: null, byId: new Map(), selected: "", shown: new Set(), history: [], next: "replace", view: { x: 0, y: 0, k: 1 }, abstracts: new Map(), lonely: false, onlyNew: false };
 const $ = (id) => document.getElementById(id);
 
 function send(message) {
@@ -105,7 +112,16 @@ document.addEventListener("rr-data", (event) => {
         node.key = message.key;
       }
     }
-    status(message.key ? "Added to My Library. Zotero may find a PDF for it." : "Zotero did not add it.", !message.key);
+    status(message.key ? `Added to ${message.place}. Zotero may find a PDF for it.` : "Zotero did not add it.", !message.key);
+    redraw();
+  }
+  else if (message.type === "filed") {
+    for (const node of state.web.nodes) {
+      if (node.key === message.key) {
+        node.filed = true;
+      }
+    }
+    status(`Put in ${message.place}.`);
     redraw();
   }
   else if (message.type === "saved") {
@@ -138,7 +154,8 @@ function show(web) {
   state.byId = new Map(web.nodes.map((node) => [node.id, node]));
   state.selected = web.focal || "";
   state.shown = new Set(["focal", ...GROUPS[web.mode].map(([group]) => group)]);
-  state.lonely = web.mode === "library";
+  state.lonely = MAPS.includes(web.mode);
+  state.onlyNew = false;
   const count = (test) => web.nodes.filter(test).length;
   const marks = ["have", "wanted", "new"].map((mark) => `${count((node) => node.mark === mark && node.id !== web.focal)} ${mark}`).join(", ");
   if (web.mode === "paper") {
@@ -157,15 +174,15 @@ function show(web) {
   else {
     const mine = count((node) => node.groups.includes("mine"));
     const links = web.edges.filter((edge) => state.byId.get(edge.source)?.groups.includes("mine") && state.byId.get(edge.target)?.groups.includes("mine")).length;
-    $("title").textContent = "Your library";
+    $("title").textContent = web.mode === "collection" ? web.collection?.name || "Collection" : "Your library";
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-    $("subtitle").textContent = `${plural(mine, "paper", "papers")} with a DOI, ${plural(links, "citation", "citations")} between them`
-      + (web.withoutDOI ? `. ${plural(web.withoutDOI, "item has", "items have")} no DOI, so ${web.withoutDOI === 1 ? "it is" : "they are"} not on the map.` : "");
+    $("subtitle").textContent = `${plural(mine, "paper", "papers")} on the map, ${plural(links, "citation", "citations")} between them`
+      + (web.withoutDOI ? `. ${plural(web.withoutDOI, "item is", "items are")} not on it, with no DOI or unknown to OpenAlex.` : "");
   }
   const budget = web.budget || {};
   $("budget").textContent = budget.remaining != null ? `OpenAlex: ${budget.remaining} of ${budget.limit || "?"} requests left today` : "";
   const empty = web.mode === "later" ? (web.nodes.length ? "" : "Nothing saved yet. Select a new paper in any web and click Check later.")
-    : web.nodes.length < 2 ? "Nothing connected was found for this paper." : "";
+    : web.nodes.length < 2 ? `Nothing connected was found for this ${web.mode === "collection" ? "collection" : "paper"}.` : "";
   status(web.problem || web.offline || empty, !!web.problem);
   $("laterAll").hidden = web.mode !== "later" || !web.nodes.some((node) => node.mark === "new" && node.doi);
   if (Number.isInteger(web.laterCount)) {
@@ -186,6 +203,9 @@ function redraw() {
 
 function visible(node) {
   if (!node.groups.some((group) => state.shown.has(group))) {
+    return false;
+  }
+  if (state.onlyNew && node.mark !== "new" && node.id !== state.web.focal && !node.groups.includes("mine")) {
     return false;
   }
   return !state.lonely || state.web.edges.some((edge) => edge.source === node.id || edge.target === node.id);
@@ -327,25 +347,7 @@ function draw() {
     });
     circles.append(circle);
   }
-  if (!state.axis) {
-    for (const [group, name] of GROUPS[state.web.mode]) {
-      const members = state.web.nodes.filter((node) => node.groups[0] === group && shown.has(node.id));
-      if (members.length && group !== "mine") {
-        const x = members.reduce((sum, node) => sum + node.x, 0) / members.length;
-        const label = el("text", { x, y: Math.min(...members.map((node) => node.y)) - 22, class: "group" });
-        label.textContent = name;
-        labels.append(label);
-      }
-    }
-  }
-  for (const id of new Set([state.web.focal, state.selected])) {
-    const node = state.byId.get(id);
-    if (node && shown.has(id)) {
-      const label = el("text", { x: node.x + radius(node) + 4, y: node.y + 4 });
-      label.textContent = `${who(node)} ${node.year || ""}`.trim();
-      labels.append(label);
-    }
-  }
+  drawLabels();
   if (state.axis) {
     const { low, high, xOf } = state.axis;
     const step = high - low > 40 ? 10 : high - low > 12 ? 5 : 1;
@@ -356,6 +358,59 @@ function draw() {
       label.textContent = String(year);
       axis.append(label);
     }
+  }
+}
+
+/** Names beside the dots, at one readable size however far you zoom. The paper in the middle, the one you picked, the
+ * ones you have and the most cited come first, and a name that would cover another is left out until you zoom in. */
+function drawLabels() {
+  const labels = $("labels");
+  labels.replaceChildren();
+  if (!state.web) {
+    return;
+  }
+  const { x, y, k } = state.view;
+  const box = $("graph").getBoundingClientRect();
+  const taken = [];
+  const place = (text, left, top, width, height, attributes, must = false) => {
+    const clear = taken.every((other) => left + width < other[0] || other[0] + other[2] < left || top + height < other[1] || other[1] + other[3] < top);
+    if (!must && (!clear || left > box.width || left + width < 0 || top > box.height || top + height < 0)) {
+      return false;
+    }
+    taken.push([left, top, width, height]);
+    const label = el("text", attributes);
+    label.textContent = text;
+    labels.append(label);
+    return true;
+  };
+  const shown = state.web.nodes.filter(visible);
+  const size = (px) => `font-size:${px / k}px;stroke-width:${3 / k}px`;
+  if (!state.axis) {
+    for (const [group, name] of GROUPS[state.web.mode]) {
+      const members = shown.filter((node) => node.groups[0] === group);
+      if (members.length && group !== "mine") {
+        const centre = members.reduce((sum, node) => sum + node.x, 0) / members.length;
+        const top = Math.min(...members.map((node) => node.y)) - 14 / k;
+        const width = name.length * 7.2;
+        place(name, centre * k + x - width / 2, top * k + y - 13, width, 16, { x: centre, y: top, class: "group", style: size(13) }, true);
+      }
+    }
+  }
+  const rank = (node) => (node.id === state.web.focal ? 3e9 : node.id === state.selected ? 2e9 : node.mark !== "new" ? 1e9 : 0) + (node.cites || 0);
+  const query = $("search").value.trim();
+  for (const node of [...shown].sort((a, b) => rank(b) - rank(a))) {
+    const first = node.id === state.web.focal || node.id === state.selected;
+    if (query && !matches(node) && !first) {
+      continue;
+    }
+    const text = `${who(node)} ${node.year || ""}`.trim();
+    const width = text.length * 6;
+    const top = node.y * k + y - 7;
+    const reach = radius(node) + 3 / k;
+    const look = { y: node.y + 4 / k, class: node.mark === "new" && !first ? "faint" : "", style: size(11) };
+    // To the right of the dot, else to its left.
+    place(text, (node.x + reach) * k + x, top, width, 14, { ...look, x: node.x + reach }, first)
+      || place(text, (node.x - reach) * k + x - width, top, width, 14, { ...look, x: node.x - reach, "text-anchor": "end" });
   }
 }
 
@@ -378,7 +433,19 @@ function filters() {
     label.append(input, ` ${name} (${count})`);
     box.append(label);
   }
-  if (state.web.mode === "library") {
+  if (state.web.mode !== "later") {
+    const label = html("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = state.onlyNew;
+    input.addEventListener("change", () => {
+      state.onlyNew = input.checked;
+      redraw();
+    });
+    label.append(input, " Only papers I don't have");
+    box.append(label);
+  }
+  if (MAPS.includes(state.web.mode)) {
     const label = html("label");
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -450,8 +517,12 @@ function details() {
   if (node.key) {
     action("Show in Zotero", { type: "show", key: node.key }, "");
   }
+  const place = state.web.collection ? shortTitle(state.web.collection.name, 24) : "";
   if (node.mark === "new" && node.doi) {
-    action("Add to Zotero", { type: "add", doi: node.doi }, "Adding to My Library…", true);
+    action(place ? `Add to ${place}` : "Add to Zotero", { type: "add", doi: node.doi }, `Adding to ${place || "My Library"}…`, true);
+  }
+  if (place && state.web.mode === "collection" && node.key && !node.filed && !node.groups.includes("mine") && node.mark !== "new") {
+    action(`Put in ${place}`, { type: "file", key: node.key }, "");
   }
   if (node.id !== state.web.focal && (node.key || node.wid)) {
     action("Centre here", { type: "centre", key: node.key, wid: node.wid }, "Asking OpenAlex…");
@@ -529,9 +600,12 @@ function merge(partial) {
 
 // ---- moving around ----
 
+let relabel = 0;
 function applyView() {
   const { x, y, k } = state.view;
   $("world").setAttribute("transform", `translate(${x},${y}) scale(${k})`);
+  cancelAnimationFrame(relabel);
+  relabel = requestAnimationFrame(drawLabels);
 }
 
 function fit() {
@@ -602,7 +676,7 @@ $("sort").addEventListener("change", list);
 $("refresh").addEventListener("click", () => {
   const focal = state.web ? state.byId.get(state.web.focal) : null;
   state.next = "replace";
-  ask({ type: "refresh", mode: state.web?.mode, key: focal?.key, wid: focal?.wid }, state.web?.mode === "later" ? "" : "Asking OpenAlex again…");
+  ask({ type: "refresh", mode: state.web?.mode, key: focal?.key, wid: focal?.wid, collection: state.web?.collection?.key }, state.web?.mode === "later" ? "" : "Asking OpenAlex again…");
 });
 $("map").addEventListener("click", () => {
   state.next = "push";

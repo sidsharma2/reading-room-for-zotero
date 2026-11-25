@@ -66,6 +66,7 @@ var RRTools = {
       this.menuItem(doc, "rrtools-equation", "Insert Equation…", () => this.openEditor(win)),
       this.menuItem(doc, "rrtools-notes", "Save Annotations and Questions as a Note", () => this.saveCurrent(win)),
       this.menuItem(doc, "rrtools-web", "Connections Web for This Paper", () => this.openWeb(win)),
+      this.menuItem(doc, "rrtools-map-collection", "Map This Collection", () => this.openCollection(win)),
       this.menuItem(doc, "rrtools-map", "Map My Library", () => this.openWeb(win, null, "library")),
       this.menuItem(doc, "rrtools-later", "Papers to Check Later", () => this.openWeb(win, null, "later")),
       this.menuItem(doc, "rrtools-openalex", "OpenAlex Key for Connections…", () => this.setOpenAlexKey(win)),
@@ -80,6 +81,16 @@ var RRTools = {
     const context = this.menuItem(doc, "rrtools-web-item", "Show Connections Web", () => this.openWeb(win));
     doc.getElementById("zotero-itemmenu")?.appendChild(context);
     items.push(context);
+    const collectionContext = this.menuItem(doc, "rrtools-map-menu", "Map This Collection", (event) => {
+      event.stopPropagation();
+      this.openCollection(win);
+    });
+    doc.getElementById("zotero-collectionmenu")?.appendChild(collectionContext);
+    items.push(collectionContext);
+    const button = this.webButton(win);
+    if (button) {
+      items.push(button);
+    }
     if (!this.exported) {
       this.exported = true;
       win.setTimeout(() => this.exportLibrary(), 20000);
@@ -265,13 +276,72 @@ var RRTools = {
     return parent?.isRegularItem?.() ? parent : null;
   },
 
-  openWeb(win, item = null, mode = "paper") {
+  /** A button beside New Note in the main window, so the web is one click away. */
+  webButton(win) {
+    const doc = win.document;
+    const bar = doc.getElementById("zotero-items-toolbar");
+    if (!bar) {
+      return null;
+    }
+    const icon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="context-stroke" stroke-width="1.3">`
+      + `<path d="M6.6 8.2 12.4 5.4M6.6 11.2l5.8 3.2M14.5 7v5.6"/><circle cx="4.7" cy="9.7" r="2.3"/><circle cx="14.5" cy="4.7" r="2.1"/><circle cx="14.5" cy="15" r="2.1"/></svg>`;
+    const button = doc.createXULElement("toolbarbutton");
+    button.id = "rrtools-tb-web";
+    button.className = "zotero-tb-button";
+    button.setAttribute("type", "menu");
+    button.setAttribute("wantdropmarker", "true");
+    button.setAttribute("tabindex", "-1");
+    button.setAttribute("tooltiptext", "Connections: find linked papers");
+    button.setAttribute("aria-label", "Connections: find linked papers");
+    button.style.cssText = `list-style-image: url("data:image/svg+xml;utf8,${encodeURIComponent(icon)}"); -moz-context-properties: stroke; stroke: currentColor;`;
+    const popup = doc.createXULElement("menupopup");
+    popup.addEventListener("popupshowing", () => this.fillWebMenu(win, popup));
+    button.appendChild(popup);
+    const before = doc.getElementById("zotero-tb-note-add")?.nextElementSibling ?? null;
+    bar.insertBefore(button, before);
+    return button;
+  },
+
+  fillWebMenu(win, popup) {
+    const doc = win.document;
+    const short = (text) => (text.length > 48 ? `${text.slice(0, 47)}…` : text);
+    const paper = this.currentItem(win);
+    const collection = win.ZoteroPane?.getSelectedCollection?.() || null;
+    const entry = (label, command, enabled = true) => {
+      const item = doc.createXULElement("menuitem");
+      item.setAttribute("label", label);
+      if (!enabled) {
+        item.setAttribute("disabled", "true");
+      }
+      item.addEventListener("command", command);
+      return item;
+    };
+    popup.replaceChildren(
+      entry(paper ? `Linked to “${short(paper.getDisplayTitle())}”` : "Linked to the selected paper", () => this.openWeb(win, paper), !!paper),
+      entry(collection ? `Map “${short(collection.name)}”` : "Map the selected collection", () => this.openCollection(win), !!collection),
+      entry("Map My Library", () => this.openWeb(win, null, "library")),
+      doc.createXULElement("menuseparator"),
+      entry("Papers to Check Later", () => this.openWeb(win, null, "later")),
+    );
+  },
+
+  openCollection(win) {
+    const collection = win.ZoteroPane?.getSelectedCollection?.() || null;
+    if (!collection) {
+      this.notify(win, "No collection selected", "Select a collection in the left pane first.");
+      return null;
+    }
+    return this.openWeb(win, null, "collection", collection);
+  },
+
+  openWeb(win, item = null, mode = "paper", collection = null) {
     const focal = mode === "paper" ? (item?.isRegularItem?.() ? item : this.currentItem(win)) : null;
     if (mode === "paper" && !focal) {
       this.notify(win, "No paper selected", "Open a paper or select one in your library.");
       return null;
     }
-    const target = { libraryID: focal?.libraryID ?? Zotero.Libraries.userLibraryID, key: focal?.key ?? "", wid: "", mode };
+    const libraryID = collection?.libraryID ?? focal?.libraryID ?? Zotero.Libraries.userLibraryID;
+    const target = { libraryID, key: focal?.key ?? "", wid: "", mode, collection: collection?.key ?? "" };
     const handle = (action, setTitle) => this.handleWeb(action, target, win, setTitle);
     return win.openDialog("chrome://rrtools/content/web.xhtml", "", "chrome,dialog=no,resizable,centerscreen", { url: "resource://rrtools/web.html", handle });
   },
@@ -283,8 +353,12 @@ var RRTools = {
     const doi = RRConnections.normalDOI(action.doi);
     const item = key ? Zotero.Items.getByLibraryAndKey(target.libraryID, key) : null;
     if (["refresh", "centre", "map", "later"].includes(action.type)) {
+      const named = /^[A-Z0-9]{8}$/.test(String(action.collection || "")) ? action.collection : "";
       if (action.type === "map" || action.mode === "library") {
-        Object.assign(target, { mode: "library", key: "", wid: "" });
+        Object.assign(target, { mode: "library", key: "", wid: "", collection: "" });
+      }
+      else if (action.mode === "collection" && named) {
+        Object.assign(target, { mode: "collection", key: "", wid: "", collection: named });
       }
       else if (action.type === "later" || action.mode === "later") {
         Object.assign(target, { mode: "later", key: "", wid: "" });
@@ -300,6 +374,9 @@ var RRTools = {
       }
     }
     const refresh = action.type === "refresh";
+    const collection = target.collection ? Zotero.Collections.getByLibraryAndKey(target.libraryID, target.collection) || null : null;
+    // While a web was reached from a collection, Add puts papers in that collection.
+    const inCollection = (web) => Object.assign(web, collection ? { collection: { key: collection.key, name: collection.name } } : {});
     switch (action.type) {
       case "ready":
       case "refresh":
@@ -314,16 +391,23 @@ var RRTools = {
           setTitle("Connections: your library");
           return { type: "web", web: await RRConnections.libraryMap(target.libraryID, refresh) };
         }
+        if (target.mode === "collection") {
+          if (!collection) {
+            throw new Error("That collection is no longer in the library.");
+          }
+          setTitle(`Connections: ${collection.name}`);
+          return { type: "web", web: inCollection(await RRConnections.libraryMap(target.libraryID, refresh, collection)) };
+        }
         if (target.wid) {
           setTitle("Connections");
-          return { type: "web", web: await RRConnections.webForWork(target.wid, refresh) };
+          return { type: "web", web: inCollection(await RRConnections.webForWork(target.wid, refresh)) };
         }
         const focal = Zotero.Items.getByLibraryAndKey(target.libraryID, target.key);
         if (!focal) {
           throw new Error("That item is no longer in the library.");
         }
         setTitle(`Connections: ${focal.getDisplayTitle()}`);
-        return { type: "web", web: await RRConnections.webForItem(focal, refresh) };
+        return { type: "web", web: inCollection(await RRConnections.webForItem(focal, refresh)) };
       }
       case "expand":
         return wid ? { type: "merge", web: await RRConnections.webForWork(wid) } : null;
@@ -347,12 +431,20 @@ var RRTools = {
         if (!doi) {
           return null;
         }
-        const added = await RRConnections.addByDOI(doi);
+        const added = await RRConnections.addByDOI(doi, collection);
         if (added) {
           const list = await RRConnections.laterList();
           await RRConnections.laterSave(list.filter((entry) => entry.doi !== doi));
         }
-        return { type: "added", doi, key: added?.key || "" };
+        return { type: "added", doi, key: added?.key || "", place: collection?.name || "My Library" };
+      }
+      case "file": {
+        // A paper you already have, put in the collection as well. It stays where it was.
+        if (item?.isRegularItem() && collection && !item.inCollection(collection.id)) {
+          item.addToCollection(collection.id);
+          await item.saveTx();
+        }
+        return item && collection ? { type: "filed", key: item.key, place: collection.name } : null;
       }
       case "later-add": {
         // The page sends what it shows. laterEntry keeps only known fields, as plain text, with checked ids and links.

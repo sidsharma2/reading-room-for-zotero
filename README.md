@@ -1,7 +1,7 @@
 # Reading Room for Zotero
 
 [![Zotero 10](https://img.shields.io/badge/Zotero-10-CC2936?logo=zotero&logoColor=white)](https://www.zotero.org)
-[![Reading Room Tools 0.4.1](https://img.shields.io/badge/Reading_Room_Tools-0.4.1-2E6DB4)](plugin/manifest.json)
+[![Reading Room Tools 0.5.0](https://img.shields.io/badge/Reading_Room_Tools-0.5.0-2E6DB4)](plugin/manifest.json)
 [![tests](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml/badge.svg)](https://github.com/sidsharma2/reading-room-for-zotero/actions/workflows/tests.yml)
 [![macOS and Windows](https://img.shields.io/badge/platform-macOS_%7C_Windows-555555)](#install-on-a-mac)
 [![MIT licence](https://img.shields.io/badge/licence-MIT-3DA639)](LICENSE)
@@ -24,7 +24,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 - Pictures and documents in the chat. Drag them onto the panel, paste them, or use the paperclip. The agent reads a PDF, Word or PowerPoint file from a plain-text copy, and the file does not have to be in your library.
 - An equation editor with a symbol keyboard and a LaTeX box that stay in step. It inserts `$...$` into an annotation comment or the chat box.
 - Markdown and LaTeX in annotation comments, and Save notes, which puts the paper's annotations and your questions and answers into a Zotero note.
-- A connections web of earlier work, later work and similar papers from OpenAlex, with what you already hold marked. Map my library shows how your own papers cite each other.
+- A connections web of earlier work, later work and similar papers from OpenAlex, with what you already hold marked. Start it from one paper, from a collection, or from the whole library, and add what it finds straight into the collection.
 - PDFs on every machine, through a folder your machines already sync, such as OneDrive, iCloud Drive or Google Drive.
 - Library clean-up with a dry run first. File papers into topic collections from a CSV, merge duplicates from a list, delete imported keyword tags, and find missing DOIs. Each step shows every change before it writes, backs up `zotero.sqlite`, and logs what it did.
 - Records of each question and answer, saved word for word in a hash chain, so a changed record shows.
@@ -35,7 +35,7 @@ I use it on Windows 11 with Zotero 10.0.8. The tests also run on macOS for every
 |---|---|---|
 | Zotero Agent 0.17.3 | The chat panel to the right of the PDF. Each question goes to Claude Code or Codex with the paper's title, page, selected text and any figure you crop. | `54yyyu/zotero-mcp`, downloaded by `plugins` and hash checked |
 | Annotation Markdown 0.16.4 | Shows annotation comments as Markdown with rendered LaTeX, and turns todo lines into tags. | `qrkks/zotero-annotation-markdown`, downloaded the same way |
-| Reading Room Tools 0.4.1 | The equation editor, attached pictures and documents, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
+| Reading Room Tools 0.5.0 | The equation editor, attached pictures and documents, the Save notes button, the connections web, the library plan, merge, tag and item-change steps, and wiki links that open in Obsidian. | `plugin/` in this repository |
 | `related_sources.py` | Before each question, finds the papers and wiki pages that match it best and hands them to the agent. The answer ends with "Related in your library". | This repository |
 | `qa_capture.py` | Saves each question and answer as Markdown records in a hash chain. | This repository |
 | `papers.py` | Moves PDFs between machines, writes a library report, and looks up missing DOIs. | This repository |
@@ -190,15 +190,19 @@ The file does not have to be in your library. For example, attach a draft and as
 
 ![A saved note: each highlight with its page, and the comment's equations rendered.](docs/images/saved-note.png)
 
-**Connections web.** Click Web on the reader toolbar, or right-click a paper and choose Show Connections Web. The paper sits in the middle with four groups around it: earlier work it cites on the left, later work that cites it on the right, papers OpenAlex rates as similar below, and papers in your library with many of the same words above. Lines also join papers that cite each other. Size shows how often a paper is cited, and colour shows what you hold (green have, amber wanted, hollow new).
+**Connections web.** Press the Connections button in the main toolbar, next to New Note, and choose the selected paper, the selected collection or your whole library. Web on the reader toolbar, and Show Connections Web when you right-click a paper, do the same for one paper. The paper sits in the middle with four groups around it: earlier work it cites on the left, later work that cites it on the right, papers OpenAlex rates as similar below, and papers in your library with many of the same words above. Lines also join papers that cite each other. Size shows how often a paper is cited, and colour shows what you hold (green have, amber wanted, hollow new). Names stand beside the dots, and zooming in shows more of them.
 
 ![The connections web for one paper, with the details and the list on the right.](docs/images/connections-web.png)
 
 - Click a paper for its details and buttons: Open PDF, Show in Zotero, Add to Zotero (by DOI, into My Library), Check later, DOI page, Free copy online. The abstract shows under them when OpenAlex has one.
 - Expand, or a double-click, adds that paper's own 30 most cited neighbours to the web. Centre here makes it the middle paper, and the arrow at the top left goes back.
 - By year lays the papers out on a timeline.
-- The list on the right has the same papers, with a filter box and a sort.
-- Map my library shows how your papers cite each other, the older papers that several of yours cite, and the newer papers that cite several of yours. Only items with a DOI can be placed.
+- The list on the right has the same papers, with a filter box and a sort. Only papers I don't have hides the ones already in your library.
+- Map This Collection starts from all the papers in a collection, and in the collections inside it. It shows how they cite each other, the earlier work that several of them cite, and the later work that cites several of them. Add puts a new paper into that collection, and Put in files one you already have there.
+
+![The map of a collection: its papers in green in the middle, the earlier work they share on the left, and the later work on the right.](docs/images/collection-map.png)
+
+- Map My Library does the same for every paper you have. A paper is placed by its DOI, or by its exact title once its own web has been opened.
 
 ![Map my library: your papers in green, with the earlier work several of them cite and the later work that cites several of them.](docs/images/library-map.png)
 
@@ -393,7 +397,7 @@ Zotero updates Zotero Agent and Annotation Markdown by itself while "Update Plug
 
 - LM Studio with Gemma 4 E4B was tried on a Mac from the command line in `chat-local`, but not yet through the panel.
 - Wiki pages in the source list need a copy of the wiki on the machine (`--vault`).
-- Attaching files was tried by hand on Windows with the paperclip. Dragging was tested there through Windows' own drop calls, and pasting with simulated events. None of it has been tried on a Mac yet. The text copy of a PDF uses a call inside Zotero that a later release could change. If it fails, the PDF is still attached, without the copy.
+- Attaching files was tried by hand on Windows, with the paperclip and by dragging from File Explorer. Pasting was tested with simulated events. None of it has been tried on a Mac yet. The text copy of a PDF uses a call inside Zotero that a later release could change. If it fails, the PDF is still attached, without the copy.
 - The connections web knows only what OpenAlex knows. A paper with no DOI is placed only by an exact title, and OpenAlex has no abstract for many publishers' papers.
 - Same words, in your library is a word match on titles, abstracts and tags. It finds papers on the same topic but can miss one that uses other words.
 - The source list for Codex is written but not tested. Codex has no hook, so its `AGENTS.md` tells it to run the search itself.

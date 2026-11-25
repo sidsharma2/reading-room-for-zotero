@@ -185,10 +185,14 @@ main {
 }
 
 #labels text.group {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   fill: var(--muted);
   text-anchor: middle;
+}
+
+#labels text.faint {
+  fill: var(--muted);
 }
 
 #axis line {

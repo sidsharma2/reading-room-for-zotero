@@ -1,8 +1,8 @@
 /* Reading Room Tools: the connections web.
  *
  * For one paper: what it cites, what cites it, what OpenAlex calls similar, and what in your own library uses the same
- * words, with lines where those papers cite each other. For the whole library: how your papers cite each other, and
- * the papers several of them cite that you do not have yet.
+ * words, with lines where those papers cite each other. For the whole library, or one collection: how those papers cite
+ * each other, the papers several of them cite, and the later papers that cite several of them.
  *
  * Metadata comes from OpenAlex. Nothing is downloaded but titles, abstracts, years, counts and identifiers, and
  * nothing is added to the library unless you click Add. Every answer is kept, and asked again after 30 days, because
@@ -311,10 +311,12 @@ var RRConnections = {
     return { mode: "paper", focal: centre.id, nodes: [...nodes.values()], edges };
   },
 
-  /** Your papers and their citations of each other, with the papers they cite or that cite them most. */
-  libraryWeb(records, library, earlier, later) {
+  /** Your papers, or one collection's, and their citations of each other, with the papers they cite or that cite them most. */
+  libraryWeb(records, library, earlier, later, collection = null) {
     const nodes = new Map();
     const edges = [];
+    const whose = collection ? "the papers here" : "your papers";
+    const outside = (key) => (collection && key && !collection.keys.has(key) ? ". In your library, outside this collection" : "");
     for (const work of records) {
       const made = this.node(work, this.find(library, work), "mine");
       nodes.set(made.id, made);
@@ -329,7 +331,7 @@ var RRConnections = {
     }
     for (const { work, count } of earlier) {
       const made = this.node(work, this.find(library, work), "earlier");
-      made.note = `cited by ${count} of your papers`;
+      made.note = `cited by ${count} of ${whose}${outside(made.key)}`;
       nodes.set(made.id, made);
       for (const mine of records) {
         if (mine.refs.includes(work.id)) {
@@ -339,7 +341,7 @@ var RRConnections = {
     }
     for (const { work, count } of later) {
       const made = this.node(work, this.find(library, work), "later");
-      made.note = `cites ${count} of your papers`;
+      made.note = `cites ${count} of ${whose}${outside(made.key)}`;
       nodes.set(made.id, made);
       for (const ref of work.refs) {
         if (ids.has(ref)) {
@@ -350,7 +352,7 @@ var RRConnections = {
     for (const item of nodes.values()) {
       delete item.refs;
     }
-    return { mode: "library", focal: "", nodes: [...nodes.values()], edges };
+    return { mode: collection ? "collection" : "library", focal: "", nodes: [...nodes.values()], edges };
   },
 
   /** Works referenced by at least `least` of your papers, most referenced first. */
@@ -681,12 +683,9 @@ var RRConnections = {
     return this.markSaved(web, await this.laterList());
   },
 
-  async libraryMap(libraryID = Zotero.Libraries.userLibraryID, refresh = false) {
-    const rows = await this.libraryRows(libraryID);
-    const library = this.makeLibrary(rows);
-    const path = this.folder("library-works.json");
-    const stored = refresh ? {} : await this.readJSON(path, {});
-    const missing = rows.filter((row) => row.doi && !(stored[row.doi] && this.fresh(stored[row.doi].at)));
+  /** Asks OpenAlex for the DOIs it has not been asked for lately, and keeps the answers. */
+  async askWorks(rows, stored, path, refresh) {
+    const missing = rows.filter((row) => row.doi && (refresh || !(stored[row.doi] && this.fresh(stored[row.doi].at))));
     for (const part of this.chunks(missing.map((row) => row.doi), 50)) {
       const reply = await this.getJSON(`${this.API}?filter=doi:${part.map((doi) => encodeURIComponent(doi)).join("|")}&per-page=50&select=${this.FIELDS}`);
       const now = new Date().toISOString();
@@ -695,10 +694,14 @@ var RRConnections = {
         stored[doi] = { at: now, work: got.get(doi) || null };
       }
     }
-    await this.writeJSON(path, stored);
-    const records = rows.map((row) => row.doi && stored[row.doi]?.work).filter(Boolean);
-    const ids = new Set(records.map((work) => work.id));
-    const earlierIds = this.mostCited(records, ids);
+    if (missing.length) {
+      await this.writeJSON(path, stored);
+    }
+  },
+
+  /** The works these papers cite most, and the later works that cite most of them. */
+  async around(records, ids, least) {
+    const earlierIds = this.mostCited(records, ids, least);
     const earlierWorks = new Map((await this.byIds(earlierIds.map(([id]) => id))).map((work) => [work.id, work]));
     const earlier = earlierIds.filter(([id]) => earlierWorks.has(id)).map(([id, count]) => ({ work: earlierWorks.get(id), count }));
     const laterCounts = new Map();
@@ -713,11 +716,58 @@ var RRConnections = {
         }
       }
     }
-    const later = [...laterCounts.values()].filter((entry) => entry.count >= 2).sort((a, b) => b.count - a.count || b.work.cites - a.work.cites).slice(0, 25);
-    const web = this.libraryWeb(records, library, earlier, later);
+    const later = [...laterCounts.values()].filter((entry) => entry.count >= least).sort((a, b) => b.count - a.count || b.work.cites - a.work.cites).slice(0, 25);
+    return { earlier, later };
+  },
+
+  /** The map of the whole library, or of one collection and the collections inside it. Offline, the kept one. */
+  async libraryMap(libraryID = Zotero.Libraries.userLibraryID, refresh = false, collection = null) {
+    const all = await this.libraryRows(libraryID);
+    const library = this.makeLibrary(all);
+    const members = collection ? new Set(collection.getDescendents(false, "item").map((entry) => entry.id)) : null;
+    const rows = members ? all.filter((row) => members.has(row.id)) : all;
+    const worksPath = this.folder("library-works.json");
+    const stored = await this.readJSON(worksPath, {});
+    let failure = null;
+    try {
+      await this.askWorks(rows, stored, worksPath, refresh);
+    }
+    catch (error) {
+      failure = error;
+    }
+    // A paper with no DOI is placed when its own web has found it by its exact title.
+    const known = await this.readJSON(this.folder("items.json"), {});
+    const placed = new Map();
+    for (const row of rows) {
+      const work = (row.doi && stored[row.doi]?.work) || known[row.key]?.work;
+      if (work?.id) {
+        placed.set(work.id, work);
+      }
+    }
+    const records = [...placed.values()];
+    const path = this.folder("maps", `${collection?.key || "library"}.json`);
+    let kept = null;
+    if (!failure) {
+      try {
+        kept = { retrieved_at: new Date().toISOString(), ...await this.around(records, new Set(placed.keys()), records.length < 4 ? 1 : 2) };
+        await this.writeJSON(path, kept);
+      }
+      catch (error) {
+        failure = error;
+      }
+    }
+    if (failure) {
+      kept = await this.readJSON(path, null);
+      if (!kept) {
+        throw failure;
+      }
+    }
+    const named = collection ? { keys: new Set(rows.map((row) => row.key)) } : null;
+    const web = this.libraryWeb(records, library, kept.earlier, kept.later, named);
     web.withoutDOI = rows.length - records.length;
+    web.offline = failure ? `${this.sentence(failure.message || failure)} Showing the map from ${String(kept.retrieved_at).slice(0, 10)}.` : "";
     web.budget = this.budget;
-    return web;
+    return this.markSaved(web, await this.laterList());
   },
 
   async abstractOf(wid) {
@@ -725,8 +775,8 @@ var RRConnections = {
     return this.abstract(record?.abstract_inverted_index);
   },
 
-  /** Adds a paper by DOI to My Library, as Add Item by Identifier does. Only ever runs on a click. */
-  async addByDOI(doi) {
+  /** Adds a paper by DOI to My Library, as Add Item by Identifier does, and to a collection. Only ever runs on a click. */
+  async addByDOI(doi, collection = null) {
     const translate = new Zotero.Translate.Search();
     translate.setIdentifier({ DOI: doi });
     const translators = await translate.getTranslators();
@@ -734,7 +784,8 @@ var RRConnections = {
       throw new Error("Zotero found no way to look up this DOI.");
     }
     translate.setTranslator(translators);
-    const items = await translate.translate({ libraryID: Zotero.Libraries.userLibraryID, saveAttachments: true });
+    const libraryID = collection?.libraryID ?? Zotero.Libraries.userLibraryID;
+    const items = await translate.translate({ libraryID, saveAttachments: true, ...(collection ? { collections: [collection.id] } : {}) });
     this.rowsCache = null;
     return items?.[0] ?? null;
   },

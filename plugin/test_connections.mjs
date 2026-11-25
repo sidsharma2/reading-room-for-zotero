@@ -103,6 +103,70 @@ test("the library map counts how many of your papers cite each outside paper", (
   assert.equal(web.nodes.find((node) => node.id === "W50").note, "cited by 3 of your papers");
 });
 
+test("a collection's map counts its own papers, and says which neighbours you already have elsewhere", () => {
+  const rows = [{ key: "KEYAAAAA", title: "In the collection, here", doi: "10.1/a", have: true, wid: "W1" }, { key: "KEYBBBBB", title: "Elsewhere in the library", doi: "10.1/b", have: true, wid: "W50" }];
+  const library = C.makeLibrary(rows);
+  const mine = [work("W1", "In the collection, here", { doi: "10.1/a", refs: ["W50", "W51"] })];
+  const earlier = [{ work: work("W50", "Elsewhere in the library", { doi: "10.1/b" }), count: 1 }, { work: work("W51", "New one"), count: 1 }];
+  const web = C.libraryWeb(mine, library, earlier, [], { keys: new Set(["KEYAAAAA"]) });
+  const node = (id) => web.nodes.find((each) => each.id === id);
+  assert.equal(web.mode, "collection");
+  assert.equal(node("W50").note, "cited by 1 of the papers here. In your library, outside this collection");
+  assert.equal(node("W51").note, "cited by 1 of the papers here");
+  assert.equal(node("W50").mark, "have");
+});
+
+/** libraryMap with Zotero, the files and OpenAlex replaced. */
+function mapping({ rows, works, files = {}, offline = false }) {
+  const asked = [];
+  const own = Object.create(C);
+  Object.assign(own, {
+    libraryRows: async () => rows,
+    folder: (...parts) => parts.join("/"),
+    readJSON: async (path, fallback) => files[path] ?? fallback,
+    writeJSON: async (path, value) => { files[path] = JSON.parse(JSON.stringify(value)); },
+    laterList: async () => [],
+    getJSON: async (url) => {
+      asked.push(url);
+      if (offline) {
+        throw new Error("no network");
+      }
+      const doi = /filter=doi:([^&]+)/.exec(url);
+      const ids = /filter=openalex:([^&]+)/.exec(url);
+      const cites = /filter=cites:([^&]+)/.exec(url);
+      const pick = (test) => ({ results: works.filter(test) });
+      return doi ? pick((w) => doi[1].split("|").map(decodeURIComponent).includes(C.normalDOI(w.doi))) : ids ? pick((w) => ids[1].split("|").includes(C.wid(w.id)))
+        : pick((w) => w.referenced_works.some((ref) => cites[1].split("|").includes(C.wid(ref))));
+    },
+  });
+  return { own, asked, files };
+}
+const raw = (id, doi, refs = []) => ({ id: `https://openalex.org/${id}`, doi: doi ? `https://doi.org/${doi}` : "", display_name: `Work ${id}`, publication_year: 2020, cited_by_count: 1, referenced_works: refs.map((ref) => `https://openalex.org/${ref}`) });
+const row = (id, key, doi) => ({ id, key, doi, title: `Work ${key}`, have: true, wid: "", creators: [] });
+
+test("a collection's map asks only about its own papers, and places one with no DOI that was found by title", async () => {
+  const rows = [row(1, "KEYAAAAA", "10.1000/a"), row(2, "KEYBBBBB", ""), row(3, "KEYCCCCC", "10.1000/c")];
+  const works = [raw("W1", "10.1000/a", ["W9"]), raw("W9", "10.1000/nine"), raw("W3", "10.1000/c", ["W1"])];
+  const files = { "items.json": { KEYBBBBB: { work: { id: "W2", doi: "", title: "Work KEYBBBBB", refs: ["W9"], authors: [], cites: 0 } } }, "library-works.json": { "10.1000/old": { at: new Date().toISOString(), work: null } } };
+  const { own, asked } = mapping({ rows, works, files });
+  const web = await own.libraryMap(1, true, { key: "COLLKEY1", getDescendents: () => [{ id: 1 }, { id: 2 }] });
+  assert.ok(!asked.some((url) => url.includes("10.1000%2Fc")), "a paper outside the collection is not asked about");
+  const groups = Object.fromEntries(web.nodes.map((node) => [node.id, node.groups[0]]));
+  assert.deepEqual(groups, { W1: "mine", W2: "mine", W9: "earlier", W3: "later" });
+  assert.equal(web.withoutDOI, 0);
+  assert.ok("10.1000/old" in files["library-works.json"], "refreshing one collection keeps the other answers");
+});
+
+test("offline, a map that was seen still opens and says from when, and one never seen says why", async () => {
+  const rows = [row(1, "KEYAAAAA", "10.1000/a")];
+  const files = { "library-works.json": { "10.1000/a": { at: "2020-01-01", work: { id: "W1", doi: "10.1000/a", title: "Work", refs: [], authors: [], cites: 0 } } }, "maps/COLLKEY1.json": { retrieved_at: "2026-11-01T00:00:00Z", earlier: [], later: [] } };
+  const collection = { key: "COLLKEY1", getDescendents: () => [{ id: 1 }] };
+  const web = await mapping({ rows, works: [], files, offline: true }).own.libraryMap(1, false, collection);
+  assert.match(web.offline, /no network\. Showing the map from 2026-11-01\./);
+  assert.equal(web.nodes.length, 1);
+  await assert.rejects(mapping({ rows, works: [], files: {}, offline: true }).own.libraryMap(1, false, collection), /no network/);
+});
+
 test("the chat's copy keeps the sections and the library marks", () => {
   const library = C.makeLibrary([{ key: "KEYAAAAA", title: "Focal", doi: "10.1/f", have: true }]);
   const web = C.paperWeb(work("W100", "Focal", { doi: "10.1/f" }), library.byKey.get("KEYAAAAA"), { references: [work("W1", "Cited one", { doi: "10.1/c" })] }, library, []);
